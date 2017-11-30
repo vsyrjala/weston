@@ -2608,75 +2608,91 @@ static const char fragment_debug[] =
 static const char fragment_brace[] =
 	"}\n";
 
-static const char texture_fragment_shader_rgba[] =
+static const char texture_fragment_header_2d[] =
 	"precision mediump float;\n"
 	"varying vec2 v_texcoord;\n"
 	"uniform sampler2D tex;\n"
 	"uniform float alpha;\n"
-	"void main()\n"
-	"{\n"
-	"   gl_FragColor = alpha * texture2D(tex, v_texcoord)\n;"
 	;
 
-static const char texture_fragment_shader_rgbx[] =
-	"precision mediump float;\n"
-	"varying vec2 v_texcoord;\n"
-	"uniform sampler2D tex;\n"
-	"uniform float alpha;\n"
-	"void main()\n"
-	"{\n"
-	"   gl_FragColor.rgb = alpha * texture2D(tex, v_texcoord).rgb\n;"
-	"   gl_FragColor.a = alpha;\n"
-	;
-
-static const char texture_fragment_shader_egl_external[] =
+static const char texture_fragment_header_egl_external[] =
 	"#extension GL_OES_EGL_image_external : require\n"
 	"precision mediump float;\n"
 	"varying vec2 v_texcoord;\n"
 	"uniform samplerExternalOES tex;\n"
 	"uniform float alpha;\n"
-	"void main()\n"
-	"{\n"
-	"   gl_FragColor = alpha * texture2D(tex, v_texcoord)\n;"
 	;
 
-static const char texture_fragment_shader_y_uv[] =
+static const char texture_fragment_shader_rgba[] =
+	"void main()\n"
+	"{\n"
+	"   vec3 rgb = texture2D(tex, v_texcoord).rgb;\n"
+	"   float a = texture2D(tex, v_texcoord).a;\n"
+	"   gl_FragColor = alpha * vec4(rgb, a);\n"
+	;
+
+static const char texture_fragment_shader_rgbx[] =
+	"void main()\n"
+	"{\n"
+	"   vec3 rgb = texture2D(tex, v_texcoord).rgb;\n"
+	"   float a = texture2D(tex, v_texcoord).a;\n"
+	"   gl_FragColor = alpha * vec4(rgb, 1.0);\n"
+	;
+
+static const char texture_fragment_shader_egl_external[] =
+	"void main()\n"
+	"{\n"
+	"   vec3 rgb = texture2D(tex, v_texcoord).rgb;\n"
+	"   float a = texture2D(tex, v_texcoord).a;\n"
+	"   gl_FragColor = alpha * vec4(rgb, a);\n"
+	;
+
+static const char texture_fragment_header_y_uv[] =
 	"precision mediump float;\n"
 	"uniform sampler2D tex;\n"
 	"uniform sampler2D tex1;\n"
 	"varying vec2 v_texcoord;\n"
 	"uniform float alpha;\n"
+	;
+
+static const char texture_fragment_shader_y_uv[] =
 	"void main() {\n"
-	"  float y = 1.16438356 * (texture2D(tex, v_texcoord).x - 0.0625);\n"
-	"  float u = texture2D(tex1, v_texcoord).r - 0.5;\n"
-	"  float v = texture2D(tex1, v_texcoord).g - 0.5;\n"
+	"  float y = texture2D(tex, v_texcoord).x;\n"
+	"  float u = texture2D(tex1, v_texcoord).r;\n"
+	"  float v = texture2D(tex1, v_texcoord).g;\n"
 	FRAGMENT_CONVERT_YUV
 	;
 
-static const char texture_fragment_shader_y_u_v[] =
+static const char texture_fragment_header_y_u_v[] =
 	"precision mediump float;\n"
 	"uniform sampler2D tex;\n"
 	"uniform sampler2D tex1;\n"
 	"uniform sampler2D tex2;\n"
 	"varying vec2 v_texcoord;\n"
 	"uniform float alpha;\n"
+	;
+
+static const char texture_fragment_shader_y_u_v[] =
 	"void main() {\n"
-	"  float y = 1.16438356 * (texture2D(tex, v_texcoord).x - 0.0625);\n"
-	"  float u = texture2D(tex1, v_texcoord).x - 0.5;\n"
-	"  float v = texture2D(tex2, v_texcoord).x - 0.5;\n"
+	"  float y = texture2D(tex, v_texcoord).x;\n"
+	"  float u = texture2D(tex1, v_texcoord).x;\n"
+	"  float v = texture2D(tex2, v_texcoord).x;\n"
 	FRAGMENT_CONVERT_YUV
 	;
 
-static const char texture_fragment_shader_y_xuxv[] =
+static const char texture_fragment_header_y_xuxv[] =
 	"precision mediump float;\n"
 	"uniform sampler2D tex;\n"
 	"uniform sampler2D tex1;\n"
 	"varying vec2 v_texcoord;\n"
 	"uniform float alpha;\n"
+	;
+
+static const char texture_fragment_shader_y_xuxv[] =
 	"void main() {\n"
-	"  float y = 1.16438356 * (texture2D(tex, v_texcoord).x - 0.0625);\n"
-	"  float u = texture2D(tex1, v_texcoord).g - 0.5;\n"
-	"  float v = texture2D(tex1, v_texcoord).a - 0.5;\n"
+	"  float y = texture2D(tex, v_texcoord).x;\n"
+	"  float u = texture2D(tex1, v_texcoord).g;\n"
+	"  float v = texture2D(tex1, v_texcoord).a;\n"
 	FRAGMENT_CONVERT_YUV
 	;
 
@@ -3523,28 +3539,34 @@ static void
 compile_texture_shaders(struct gl_texture_shaders *texture_shader)
 {
 	texture_shader->rgba.vertex_source = vertex_shader;
-	texture_shader->rgba.fragment_sources[0] = texture_fragment_shader_rgba;
-	texture_shader->rgba.fragment_count = 1;
+	texture_shader->rgba.fragment_sources[0] = texture_fragment_header_2d;
+	texture_shader->rgba.fragment_sources[1] = texture_fragment_shader_rgba;
+	texture_shader->rgba.fragment_count = 2;
 
 	texture_shader->rgbx.vertex_source = vertex_shader;
-	texture_shader->rgbx.fragment_sources[0] = texture_fragment_shader_rgbx;
-	texture_shader->rgba.fragment_count = 1;
+	texture_shader->rgbx.fragment_sources[0] = texture_fragment_header_2d;
+	texture_shader->rgbx.fragment_sources[1] = texture_fragment_shader_rgbx;
+	texture_shader->rgbx.fragment_count = 2;
 
 	texture_shader->egl_external.vertex_source = vertex_shader;
-	texture_shader->egl_external.fragment_sources[0] = texture_fragment_shader_egl_external;
-	texture_shader->egl_external.fragment_count = 1;
+	texture_shader->egl_external.fragment_sources[0] = texture_fragment_header_egl_external;
+	texture_shader->egl_external.fragment_sources[1] = texture_fragment_shader_egl_external;
+	texture_shader->egl_external.fragment_count = 2;
 
 	texture_shader->y_uv.vertex_source = vertex_shader;
-	texture_shader->y_uv.fragment_sources[0] = texture_fragment_shader_y_uv;
-	texture_shader->y_uv.fragment_count = 1;
+	texture_shader->y_uv.fragment_sources[0] = texture_fragment_header_y_uv;
+	texture_shader->y_uv.fragment_sources[1] = texture_fragment_shader_y_uv;
+	texture_shader->y_uv.fragment_count = 2;
 
 	texture_shader->y_u_v.vertex_source = vertex_shader;
-	texture_shader->y_u_v.fragment_sources[0] = texture_fragment_shader_y_u_v;
-	texture_shader->y_u_v.fragment_count = 1;
+	texture_shader->y_u_v.fragment_sources[0] = texture_fragment_header_y_u_v;
+	texture_shader->y_u_v.fragment_sources[1] = texture_fragment_shader_y_u_v;
+	texture_shader->y_u_v.fragment_count = 2;
 
 	texture_shader->y_xuxv.vertex_source = vertex_shader;
-	texture_shader->y_xuxv.fragment_sources[0] = texture_fragment_shader_y_xuxv;
-	texture_shader->y_xuxv.fragment_count = 1;
+	texture_shader->y_xuxv.fragment_sources[0] = texture_fragment_header_y_xuxv;
+	texture_shader->y_xuxv.fragment_sources[1] = texture_fragment_shader_y_xuxv;
+	texture_shader->y_xuxv.fragment_count = 2;
 }
 
 static int
