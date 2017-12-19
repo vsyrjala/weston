@@ -71,6 +71,7 @@ struct wet_output_config {
 	int width;
 	int height;
 	int32_t scale;
+	int32_t max_sdr_nits;
 	uint32_t transform;
 	const char *colorspace;
 	const char *gamma;
@@ -467,6 +468,7 @@ wet_init_parsed_options(struct weston_compositor *ec)
 	config->transform = UINT32_MAX;
 	config->colorspace = "sRGB";
 	config->gamma = "sRGB";
+	config->max_sdr_nits = 100;
 
 	compositor->parsed_options = config;
 
@@ -1105,6 +1107,23 @@ wet_output_set_scale(struct weston_output *output,
 	weston_output_set_scale(output, scale);
 }
 
+static void
+wet_output_set_max_sdr_nits(struct weston_output *output,
+			    struct weston_config_section *section,
+			    int32_t default_max_sdr_nits,
+			    int32_t parsed_max_sdr_nits)
+{
+	int32_t max_sdr_nits = default_max_sdr_nits;
+
+	if (section)
+		weston_config_section_get_int(section, "max_sdr_nits", &max_sdr_nits, default_max_sdr_nits);
+
+	if (parsed_max_sdr_nits)
+		max_sdr_nits = parsed_max_sdr_nits;
+
+	weston_output_set_max_sdr_nits(output, max_sdr_nits);
+}
+
 /* UINT32_MAX is treated as invalid because 0 is a valid
  * enumeration value and the parameter is unsigned
  */
@@ -1242,6 +1261,7 @@ wet_configure_windowed_output_from_config(struct weston_output *output,
 	wet_output_set_transform(output, section, defaults->transform, parsed_options->transform);
 	wet_output_set_colorspace(output, section, defaults->colorspace, parsed_options->colorspace);
 	wet_output_set_gamma(output, section, defaults->gamma, parsed_options->gamma);
+	wet_output_set_max_sdr_nits(output, section, defaults->max_sdr_nits, parsed_options->max_sdr_nits);
 
 	if (api->output_set_size(output, width, height) < 0) {
 		weston_log("Cannot configure output \"%s\" using weston_windowed_output_api.\n",
@@ -1325,6 +1345,7 @@ drm_backend_output_configure(struct wl_listener *listener, void *data)
 	wet_output_set_transform(output, section, WL_OUTPUT_TRANSFORM_NORMAL, UINT32_MAX);
 	wet_output_set_colorspace(output, section, "sRGB", "sRGB");
 	wet_output_set_gamma(output, section, "sRGB", "sRGB");
+	wet_output_set_max_sdr_nits(output, section, 100, 0);
 
 	weston_config_section_get_string(section,
 					 "gbm-format", &gbm_format, NULL);
@@ -1391,6 +1412,7 @@ headless_backend_output_configure(struct wl_listener *listener, void *data)
 		.width = 1024,
 		.height = 640,
 		.scale = 1,
+		.max_sdr_nits = 100,
 		.transform = WL_OUTPUT_TRANSFORM_NORMAL
 	};
 
@@ -1484,6 +1506,7 @@ rdp_backend_output_configure(struct wl_listener *listener, void *data)
 	weston_output_set_transform(output, WL_OUTPUT_TRANSFORM_NORMAL);
 	weston_output_set_colorspace(output, "sRGB");
 	weston_output_set_gamma(output, "sRGB");
+	weston_output_set_max_sdr_nits(output, 100);
 
 	if (api->output_set_size(output, width, height) < 0) {
 		weston_log("Cannot configure output \"%s\" using weston_rdp_output_api.\n",
@@ -1566,6 +1589,7 @@ fbdev_backend_output_configure(struct wl_listener *listener, void *data)
 	wet_output_set_colorspace(output, section, "sRGB", "sRGB");
 	wet_output_set_gamma(output, section, "sRGB", "sRGB");
 	weston_output_set_scale(output, 1);
+	weston_output_set_max_sdr_nits(output, 100);
 
 	weston_output_enable(output);
 }
@@ -1731,6 +1755,7 @@ wayland_backend_output_configure(struct wl_listener *listener, void *data)
 		.scale = 1,
 		.colorspace = "sRGB",
 		.gamma = "sRGB",
+		.max_sdr_nits = 100,
 		.transform = WL_OUTPUT_TRANSFORM_NORMAL
 	};
 

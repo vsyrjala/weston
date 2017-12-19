@@ -166,6 +166,7 @@ struct weston_output {
 	/** Output colorspace */
 	const char *colorspace;
 	const char *gamma;
+	int max_sdr_nits;
 
 	struct wl_list animation_list;
 	int32_t x, y, width, height;
@@ -1947,6 +1948,10 @@ weston_compositor_load_xwayland(struct weston_compositor *compositor);
 void
 weston_output_set_scale(struct weston_output *output,
 			int32_t scale);
+
+void
+weston_output_set_max_sdr_nits(struct weston_output *output,
+			       int32_t max_sdr_nits);
 
 void
 weston_output_set_transform(struct weston_output *output,

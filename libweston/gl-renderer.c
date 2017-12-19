@@ -275,6 +275,7 @@ struct gl_renderer {
 
 	const char *colorspace;
 	const char *gamma;
+	int max_sdr_nits;
 };
 
 enum timeline_render_point_type {
@@ -1771,6 +1772,7 @@ static bool setup_colors(struct gl_renderer *gr,
 	const struct weston_colorspace *src_cs, *dst_cs;
 	const char *src_colorspace = NULL;
 	const char *src_gamma = NULL;
+	float luminance_scale;
 
 	if (es->colorspace)
 		src_colorspace = es->colorspace;
@@ -1793,9 +1795,14 @@ static bool setup_colors(struct gl_renderer *gr,
 	if (!strcmp(src_colorspace, "Undefined"))
 		src_colorspace = gr->colorspace;
 
+	if (strcmp(src_gamma, "ST2084") && !strcmp(gr->gamma, "ST2084"))
+		luminance_scale = gr->max_sdr_nits / 10000.0f;
+	else
+		luminance_scale = 1.0f;
+
 	src_cs = weston_colorspace_lookup(src_colorspace);
 	dst_cs = weston_colorspace_lookup(gr->colorspace);
-	weston_csc_matrix(&gs->csc_matrix, dst_cs, src_cs, 1.0f);
+	weston_csc_matrix(&gs->csc_matrix, dst_cs, src_cs, luminance_scale);
 
 	weston_degamma_lookup(&gs->degamma_coeff, src_gamma);
 
@@ -3494,6 +3501,7 @@ gl_renderer_output_window_create(struct weston_output *output,
 	/* FIXME should be per output */
 	gr->colorspace = output->colorspace;
 	gr->gamma = output->gamma;
+	gr->max_sdr_nits = output->max_sdr_nits;
 
 	return ret;
 }

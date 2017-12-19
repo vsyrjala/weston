@@ -4687,6 +4687,29 @@ weston_output_set_scale(struct weston_output *output,
 	output->scale = scale;
 }
 
+/** Sets the max nits for SDR content for a given output.
+ *
+ * \param output The weston_output object that the scale is set for.
+ * \param max_sdr_nits  Max nits for SDR content (0-10000)
+ *
+ * It only supports setting scale for an output that
+ * is not enabled and it can only be ran once.
+ *
+ * \memberof weston_output
+ */
+WL_EXPORT void
+weston_output_set_max_sdr_nits(struct weston_output *output,
+			       int32_t max_sdr_nits)
+{
+	/* We can only set scale on a disabled output */
+	assert(!output->enabled);
+
+	/* We only want to set nits once */
+	assert(!output->max_sdr_nits);
+
+	output->max_sdr_nits = max_sdr_nits;
+}
+
 /** Sets the output transform for a given output.
  *
  * \param output    The weston_output object that the transform is set for.
