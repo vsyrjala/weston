@@ -1885,6 +1885,7 @@ gl_renderer_attach_shm(struct weston_surface *es, struct weston_buffer *buffer,
 		gl_pixel_type = GL_UNSIGNED_SHORT_5_6_5;
 		break;
 	case WL_SHM_FORMAT_YUV420:
+	case WL_SHM_FORMAT_YVU420:
 		if (st2084)
 			gs->shader = &gr->st2084_texture_shader.y_u_v;
 		else
@@ -1908,6 +1909,13 @@ gl_renderer_attach_shm(struct weston_surface *es, struct weston_buffer *buffer,
 			gl_format[0] = GL_LUMINANCE;
 			gl_format[1] = GL_LUMINANCE;
 			gl_format[2] = GL_LUMINANCE;
+		}
+		switch (wl_shm_buffer_get_format(shm_buffer)) {
+		case WL_SHM_FORMAT_YVU420:
+			SWAP(gs->offset[1], gs->offset[2]);
+			break;
+		default:
+			break;
 		}
 		break;
 	case WL_SHM_FORMAT_NV12:
@@ -3952,6 +3960,7 @@ gl_renderer_display_create(struct weston_compositor *ec, EGLenum platform,
 
 	wl_display_add_shm_format(ec->wl_display, WL_SHM_FORMAT_RGB565);
 	wl_display_add_shm_format(ec->wl_display, WL_SHM_FORMAT_YUV420);
+	wl_display_add_shm_format(ec->wl_display, WL_SHM_FORMAT_YVU420);
 	wl_display_add_shm_format(ec->wl_display, WL_SHM_FORMAT_NV12);
 	wl_display_add_shm_format(ec->wl_display, WL_SHM_FORMAT_YUYV);
 
