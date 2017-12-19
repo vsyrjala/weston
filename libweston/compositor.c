@@ -4470,6 +4470,12 @@ weston_output_colorspace_init(struct weston_output *output, const char *colorspa
 }
 
 static void
+weston_output_gamma_init(struct weston_output *output, const char *gamma)
+{
+	output->gamma = gamma;
+}
+
+static void
 weston_output_init_geometry(struct weston_output *output, int x, int y)
 {
 	output->x = x;
@@ -4735,6 +4741,33 @@ weston_output_set_colorspace(struct weston_output *output,
 	output->colorspace = colorspace;
 }
 
+/** Sets the output colorsapce for a given output.
+ *
+ * \param output     The weston_output object that the colorspace is set for.
+ * \param colorspace Colorspace value for the given output.
+ *
+ * It only supports setting colorspace for an output that is
+ * not enabled and it can only be ran once.
+ *
+ * Refer to wl_output::colorspace section located at
+ * https://wayland.freedesktop.org/docs/html/apa.html#protocol-spec-wl_output
+ * for list of values that can be passed to this function.
+ *
+ * \memberof weston_output
+ */
+WL_EXPORT void
+weston_output_set_gamma(struct weston_output *output,
+			const char *gamma)
+{
+	/* We can only set transform on a disabled output */
+	assert(!output->enabled);
+
+	/* We only want to set transform once */
+	assert(!output->gamma);
+
+	output->gamma = gamma;
+}
+
 /** Initializes a weston_output object with enough data so
  ** an output can be configured.
  *
@@ -4771,6 +4804,7 @@ weston_output_init(struct weston_output *output,
 	/* Can't use -1 on uint32_t and 0 is valid enum value */
 	output->transform = UINT32_MAX;
 	output->colorspace = NULL;
+	output->gamma = NULL;
 
 	pixman_region32_init(&output->previous_damage);
 	pixman_region32_init(&output->region);
@@ -4872,6 +4906,7 @@ weston_output_enable(struct weston_output *output)
 	weston_output_init_zoom(output);
 
 	weston_output_colorspace_init(output, output->colorspace);
+	weston_output_gamma_init(output, output->gamma);
 
 	weston_output_init_geometry(output, x, y);
 	weston_output_damage(output);

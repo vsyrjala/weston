@@ -165,6 +165,7 @@ struct weston_output {
 
 	/** Output colorspace */
 	const char *colorspace;
+	const char *gamma;
 
 	struct wl_list animation_list;
 	int32_t x, y, width, height;
@@ -1921,6 +1922,8 @@ int
 weston_parse_transform(const char *transform, uint32_t *out);
 int
 weston_parse_colorspace(const char *colorspace, const char **out);
+int
+weston_parse_gamma(const char *gamma, const char **out);
 
 const char *
 weston_transform_to_string(uint32_t output_transform);
@@ -1952,6 +1955,10 @@ weston_output_set_transform(struct weston_output *output,
 void
 weston_output_set_colorspace(struct weston_output *output,
 			     const char *colorspace);
+
+void
+weston_output_set_gamma(struct weston_output *output,
+			const char *gamma);
 
 void
 weston_output_init(struct weston_output *output,

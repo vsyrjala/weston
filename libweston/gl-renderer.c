@@ -261,6 +261,7 @@ struct gl_renderer {
 	PFNEGLDUPNATIVEFENCEFDANDROIDPROC dup_native_fence_fd;
 
 	const char *colorspace;
+	const char *gamma;
 };
 
 enum timeline_render_point_type {
@@ -3137,6 +3138,7 @@ gl_renderer_output_window_create(struct weston_output *output,
 
 	/* FIXME should be per output */
 	gr->colorspace = output->colorspace;
+	gr->gamma = output->gamma;
 
 	return ret;
 }

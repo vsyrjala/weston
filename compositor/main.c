@@ -73,6 +73,7 @@ struct wet_output_config {
 	int32_t scale;
 	uint32_t transform;
 	const char *colorspace;
+	const char *gamma;
 };
 
 struct wet_compositor {
@@ -465,6 +466,7 @@ wet_init_parsed_options(struct weston_compositor *ec)
 	config->scale = 0;
 	config->transform = UINT32_MAX;
 	config->colorspace = "sRGB";
+	config->gamma = "sRGB";
 
 	compositor->parsed_options = config;
 
@@ -1015,6 +1017,34 @@ weston_parse_colorspace(const char *colorspace, const char **out)
 	return -1;
 }
 
+static const char * const gammas[] = {
+	"BT.709",
+	"SMPTE240M",
+	"sRGB",
+	"AdobeRGB",
+	"DCI-P3",
+	"PhotoProRGB",
+	"ST2084",
+	"Linear",
+};
+
+WL_EXPORT int
+weston_parse_gamma(const char *gamma, const char **out)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_LENGTH(gammas); i++) {
+		weston_log("%s vs %s\n", gammas[i], gamma);
+		if (strcmp(gammas[i], gamma) == 0) {
+			*out = gammas[i];
+			return 0;
+		}
+	}
+
+	*out = "Linear";
+	return -1;
+}
+
 static int
 load_configuration(struct weston_config **config, int32_t noconfig,
 		   const char *config_file)
@@ -1135,6 +1165,36 @@ wet_output_set_colorspace(struct weston_output *output,
 	weston_output_set_colorspace(output, colorspace);
 }
 
+/* UINT32_MAX is treated as invalid because 0 is a valid
+ * enumeration value and the parameter is unsigned
+ */
+static void
+wet_output_set_gamma(struct weston_output *output,
+		     struct weston_config_section *section,
+		     const char *default_gamma,
+		     const char *parsed_gamma)
+{
+	char *t;
+	const char *gamma = default_gamma;
+
+	if (section) {
+		weston_config_section_get_string(section,
+						 "gamma", &t, "Linear");
+
+		if (weston_parse_gamma(t, &gamma) < 0) {
+			weston_log("Invalid gamma \"%s\" for output %s\n",
+				   t, output->name);
+			gamma = default_gamma;
+		}
+		free(t);
+	}
+
+	if (!parsed_gamma)
+		gamma = parsed_gamma;
+
+	weston_output_set_gamma(output, gamma);
+}
+
 static int
 wet_configure_windowed_output_from_config(struct weston_output *output,
 					  struct wet_output_config *defaults)
@@ -1181,6 +1241,7 @@ wet_configure_windowed_output_from_config(struct weston_output *output,
 	wet_output_set_scale(output, section, defaults->scale, parsed_options->scale);
 	wet_output_set_transform(output, section, defaults->transform, parsed_options->transform);
 	wet_output_set_colorspace(output, section, defaults->colorspace, parsed_options->colorspace);
+	wet_output_set_gamma(output, section, defaults->gamma, parsed_options->gamma);
 
 	if (api->output_set_size(output, width, height) < 0) {
 		weston_log("Cannot configure output \"%s\" using weston_windowed_output_api.\n",
@@ -1263,6 +1324,7 @@ drm_backend_output_configure(struct wl_listener *listener, void *data)
 	wet_output_set_scale(output, section, 1, 0);
 	wet_output_set_transform(output, section, WL_OUTPUT_TRANSFORM_NORMAL, UINT32_MAX);
 	wet_output_set_colorspace(output, section, "sRGB", "sRGB");
+	wet_output_set_gamma(output, section, "sRGB", "sRGB");
 
 	weston_config_section_get_string(section,
 					 "gbm-format", &gbm_format, NULL);
@@ -1421,6 +1483,7 @@ rdp_backend_output_configure(struct wl_listener *listener, void *data)
 	weston_output_set_scale(output, 1);
 	weston_output_set_transform(output, WL_OUTPUT_TRANSFORM_NORMAL);
 	weston_output_set_colorspace(output, "sRGB");
+	weston_output_set_gamma(output, "sRGB");
 
 	if (api->output_set_size(output, width, height) < 0) {
 		weston_log("Cannot configure output \"%s\" using weston_rdp_output_api.\n",
@@ -1501,6 +1564,7 @@ fbdev_backend_output_configure(struct wl_listener *listener, void *data)
 
 	wet_output_set_transform(output, section, WL_OUTPUT_TRANSFORM_NORMAL, UINT32_MAX);
 	wet_output_set_colorspace(output, section, "sRGB", "sRGB");
+	wet_output_set_gamma(output, section, "sRGB", "sRGB");
 	weston_output_set_scale(output, 1);
 
 	weston_output_enable(output);
@@ -1666,6 +1730,7 @@ wayland_backend_output_configure(struct wl_listener *listener, void *data)
 		.height = 640,
 		.scale = 1,
 		.colorspace = "sRGB",
+		.gamma = "sRGB",
 		.transform = WL_OUTPUT_TRANSFORM_NORMAL
 	};
 
