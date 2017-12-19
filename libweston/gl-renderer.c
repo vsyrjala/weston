@@ -57,6 +57,7 @@
 
 #include "shared/helpers.h"
 #include "shared/platform.h"
+#include "shared/color_encoding.h"
 #include "shared/timespec-util.h"
 #include "weston-egl-ext.h"
 
@@ -67,6 +68,7 @@ struct gl_shader {
 	GLint tex_uniforms[3];
 	GLint alpha_uniform;
 	GLint color_uniform;
+	GLint yuv2rgb_uniform;
 	GLint fragment_count;
 	const char *vertex_source, *fragment_sources[3];
 };
@@ -154,6 +156,8 @@ struct yuv_format_descriptor {
 struct gl_surface_state {
 	GLfloat color[4];
 	struct gl_shader *shader;
+
+	struct weston_matrix yuv2rgb_matrix;
 
 	GLuint textures[3];
 	int num_textures;
@@ -869,6 +873,17 @@ use_shader(struct gl_renderer *gr, struct gl_shader *shader)
 }
 
 static void
+shader_uniforms_identity(struct gl_shader *shader)
+{
+	struct weston_matrix matrix;
+
+	weston_matrix_init(&matrix);
+
+	glUniformMatrix4fv(shader->yuv2rgb_uniform,
+			   1, GL_FALSE, matrix.d);
+}
+
+static void
 shader_uniforms(struct gl_shader *shader,
 		struct weston_view *view,
 		struct weston_output *output)
@@ -881,6 +896,10 @@ shader_uniforms(struct gl_shader *shader,
 			   1, GL_FALSE, go->output_matrix.d);
 	glUniform4fv(shader->color_uniform, 1, gs->color);
 	glUniform1f(shader->alpha_uniform, view->alpha);
+
+	//weston_matrix_print(&gs->yuv2rgb_matrix);
+	glUniformMatrix4fv(shader->yuv2rgb_uniform,
+			   1, GL_FALSE, gs->yuv2rgb_matrix.d);
 
 	for (i = 0; i < gs->num_textures; i++)
 		glUniform1i(shader->tex_uniforms[i], i);
@@ -1103,6 +1122,7 @@ draw_output_borders(struct weston_output *output,
 
 	glDisable(GL_BLEND);
 	use_shader(gr, shader);
+	shader_uniforms_identity(shader);
 
 	glViewport(0, 0, full_width, full_height);
 
@@ -1551,6 +1571,7 @@ gl_renderer_attach_shm(struct weston_surface *es, struct weston_buffer *buffer,
 	GLenum gl_pixel_type;
 	int pitch;
 	int num_planes;
+	bool is_yuv;
 
 	buffer->shm_buffer = shm_buffer;
 	buffer->width = wl_shm_buffer_get_width(shm_buffer);
@@ -1560,6 +1581,29 @@ gl_renderer_attach_shm(struct weston_surface *es, struct weston_buffer *buffer,
 	gs->offset[0] = 0;
 	gs->hsub[0] = 1;
 	gs->vsub[0] = 1;
+
+	switch (wl_shm_buffer_get_format(shm_buffer)) {
+	case WL_SHM_FORMAT_YUV420:
+	case WL_SHM_FORMAT_YVU420:
+	case WL_SHM_FORMAT_NV12:
+	case WL_SHM_FORMAT_YUYV:
+		is_yuv = true;
+		break;
+	default:
+		is_yuv = false;
+		break;
+	}
+
+	if (is_yuv) {
+		const struct weston_color_encoding *e;
+
+		e = es->ycbcr_encoding;
+		if (!e)
+			e = weston_color_encoding_lookup("BT.709");
+
+		weston_ycbcr2rgb_matrix(&gs->yuv2rgb_matrix, e,
+					1.0f, es->ycbcr_full_range);
+	}
 
 	switch (wl_shm_buffer_get_format(shm_buffer)) {
 	case WL_SHM_FORMAT_XRGB8888:
@@ -1676,6 +1720,7 @@ gl_renderer_attach_egl(struct weston_surface *es, struct weston_buffer *buffer,
 	struct gl_surface_state *gs = get_surface_state(es);
 	EGLint attribs[3];
 	int i, num_planes;
+	bool is_yuv;
 
 	buffer->legacy_buffer = (struct wl_buffer *)buffer->resource;
 	gr->query_buffer(gr->egl_display, buffer->legacy_buffer,
@@ -1684,6 +1729,28 @@ gl_renderer_attach_egl(struct weston_surface *es, struct weston_buffer *buffer,
 			 EGL_HEIGHT, &buffer->height);
 	gr->query_buffer(gr->egl_display, buffer->legacy_buffer,
 			 EGL_WAYLAND_Y_INVERTED_WL, &buffer->y_inverted);
+
+	switch (format) {
+	case EGL_TEXTURE_Y_UV_WL:
+	case EGL_TEXTURE_Y_U_V_WL:
+	case EGL_TEXTURE_Y_XUXV_WL:
+		is_yuv = true;
+		break;
+	default:
+		is_yuv = false;
+		break;
+	}
+
+	if (is_yuv) {
+		const struct weston_color_encoding *e;
+
+		e = es->ycbcr_encoding;
+		if (!e)
+			e = weston_color_encoding_lookup("BT.709");
+
+		weston_ycbcr2rgb_matrix(&gs->yuv2rgb_matrix, e,
+					1.0f, es->ycbcr_full_range);
+	}
 
 	for (i = 0; i < gs->num_images; i++) {
 		egl_image_unref(gs->images[i]);
@@ -2220,6 +2287,7 @@ gl_renderer_attach_dmabuf(struct weston_surface *surface,
 	struct gl_renderer *gr = get_renderer(surface->compositor);
 	struct gl_surface_state *gs = get_surface_state(surface);
 	struct dmabuf_image *image;
+	const struct weston_color_encoding *e;
 	int i;
 	int ret;
 
@@ -2278,6 +2346,13 @@ gl_renderer_attach_dmabuf(struct weston_surface *surface,
 		glBindTexture(gs->target, gs->textures[i]);
 		gr->image_target_texture_2d(gs->target, gs->images[i]->image);
 	}
+
+	e = surface->ycbcr_encoding;
+	if (!e)
+		e = weston_color_encoding_lookup("BT.709");
+
+	weston_ycbcr2rgb_matrix(&gs->yuv2rgb_matrix, e,
+				1.0f, surface->ycbcr_full_range);
 
 	gs->shader = image->shader;
 	gs->pitch = buffer->width;
@@ -2453,6 +2528,7 @@ gl_renderer_surface_copy_content(struct weston_surface *surface,
 	glViewport(0, 0, cw, ch);
 	glDisable(GL_BLEND);
 	use_shader(gr, gs->shader);
+	shader_uniforms_identity(gs->shader);
 	if (gs->y_inverted)
 		proj = projmat_normal;
 	else
@@ -2594,13 +2670,9 @@ static const char vertex_shader[] =
 
 /* Declare common fragment shader uniforms */
 #define FRAGMENT_CONVERT_YUV						\
-	"  y *= alpha;\n"						\
-	"  u *= alpha;\n"						\
-	"  v *= alpha;\n"						\
-	"  gl_FragColor.r = y + 1.59602678 * v;\n"			\
-	"  gl_FragColor.g = y - 0.39176229 * u - 0.81296764 * v;\n"	\
-	"  gl_FragColor.b = y + 2.01723214 * u;\n"			\
-	"  gl_FragColor.a = alpha;\n"
+	"  vec4 yuv = vec4(y, u, v, 1.0);\n"				\
+	"  vec3 rgb = (yuv2rgb * yuv).rgb;\n"				\
+	"  gl_FragColor = alpha * vec4(rgb, 1.0);\n"
 
 static const char fragment_debug[] =
 	"  gl_FragColor = vec4(0.0, 0.3, 0.0, 0.2) + gl_FragColor * 0.8;\n";
@@ -2653,6 +2725,7 @@ static const char texture_fragment_header_y_uv[] =
 	"uniform sampler2D tex1;\n"
 	"varying vec2 v_texcoord;\n"
 	"uniform float alpha;\n"
+	"uniform mat4 yuv2rgb;\n"
 	;
 
 static const char texture_fragment_shader_y_uv[] =
@@ -2670,6 +2743,7 @@ static const char texture_fragment_header_y_u_v[] =
 	"uniform sampler2D tex2;\n"
 	"varying vec2 v_texcoord;\n"
 	"uniform float alpha;\n"
+	"uniform mat4 yuv2rgb;\n"
 	;
 
 static const char texture_fragment_shader_y_u_v[] =
@@ -2686,6 +2760,7 @@ static const char texture_fragment_header_y_xuxv[] =
 	"uniform sampler2D tex1;\n"
 	"varying vec2 v_texcoord;\n"
 	"uniform float alpha;\n"
+	"uniform mat4 yuv2rgb;\n"
 	;
 
 static const char texture_fragment_shader_y_xuxv[] =
@@ -2771,6 +2846,7 @@ shader_init(struct gl_shader *shader, struct gl_renderer *renderer,
 	shader->tex_uniforms[2] = glGetUniformLocation(shader->program, "tex2");
 	shader->alpha_uniform = glGetUniformLocation(shader->program, "alpha");
 	shader->color_uniform = glGetUniformLocation(shader->program, "color");
+	shader->yuv2rgb_uniform = glGetUniformLocation(shader->program, "yuv2rgb");
 
 	return 0;
 }
