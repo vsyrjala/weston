@@ -67,7 +67,8 @@ struct gl_shader {
 	GLint tex_uniforms[3];
 	GLint alpha_uniform;
 	GLint color_uniform;
-	const char *vertex_source, *fragment_source;
+	GLint fragment_count;
+	const char *vertex_source, *fragment_sources[3];
 };
 
 #define BUFFER_DAMAGE_COUNT 2
@@ -843,7 +844,8 @@ use_output(struct weston_output *output)
 
 static int
 shader_init(struct gl_shader *shader, struct gl_renderer *gr,
-		   const char *vertex_source, const char *fragment_source);
+	    const char *vertex_source,
+	    const char *fragment_sources[], int fragment_count);
 
 static void
 use_shader(struct gl_renderer *gr, struct gl_shader *shader)
@@ -853,7 +855,8 @@ use_shader(struct gl_renderer *gr, struct gl_shader *shader)
 
 		ret =  shader_init(shader, gr,
 				   shader->vertex_source,
-				   shader->fragment_source);
+				   shader->fragment_sources,
+				   shader->fragment_count);
 
 		if (ret < 0)
 			weston_log("warning: failed to compile shader\n");
@@ -2708,26 +2711,24 @@ compile_shader(GLenum type, int count, const char **sources)
 
 static int
 shader_init(struct gl_shader *shader, struct gl_renderer *renderer,
-		   const char *vertex_source, const char *fragment_source)
+	    const char *vertex_source, const char *fragment_sources[],
+	    int fragment_count)
 {
 	char msg[512];
 	GLint status;
 	int count;
-	const char *sources[3];
+	const char *sources[5];
+
+	assert(fragment_count <= 3);
 
 	shader->vertex_shader =
 		compile_shader(GL_VERTEX_SHADER, 1, &vertex_source);
 
-	if (renderer->fragment_shader_debug) {
-		sources[0] = fragment_source;
-		sources[1] = fragment_debug;
-		sources[2] = fragment_brace;
-		count = 3;
-	} else {
-		sources[0] = fragment_source;
-		sources[1] = fragment_brace;
-		count = 2;
-	}
+	for (count = 0; count < fragment_count; count++)
+		sources[count] = fragment_sources[count];
+	if (renderer->fragment_shader_debug)
+		sources[count++] = fragment_debug;
+	sources[count++] = fragment_brace;
 
 	shader->fragment_shader =
 		compile_shader(GL_FRAGMENT_SHADER, count, sources);
@@ -3520,22 +3521,28 @@ static void
 compile_texture_shaders(struct gl_texture_shaders *texture_shader)
 {
 	texture_shader->rgba.vertex_source = vertex_shader;
-	texture_shader->rgba.fragment_source = texture_fragment_shader_rgba;
+	texture_shader->rgba.fragment_sources[0] = texture_fragment_shader_rgba;
+	texture_shader->rgba.fragment_count = 1;
 
 	texture_shader->rgbx.vertex_source = vertex_shader;
-	texture_shader->rgbx.fragment_source = texture_fragment_shader_rgbx;
+	texture_shader->rgbx.fragment_sources[0] = texture_fragment_shader_rgbx;
+	texture_shader->rgba.fragment_count = 1;
 
 	texture_shader->egl_external.vertex_source = vertex_shader;
-	texture_shader->egl_external.fragment_source = texture_fragment_shader_egl_external;
+	texture_shader->egl_external.fragment_sources[0] = texture_fragment_shader_egl_external;
+	texture_shader->egl_external.fragment_count = 1;
 
 	texture_shader->y_uv.vertex_source = vertex_shader;
-	texture_shader->y_uv.fragment_source = texture_fragment_shader_y_uv;
+	texture_shader->y_uv.fragment_sources[0] = texture_fragment_shader_y_uv;
+	texture_shader->y_uv.fragment_count = 1;
 
 	texture_shader->y_u_v.vertex_source = vertex_shader;
-	texture_shader->y_u_v.fragment_source = texture_fragment_shader_y_u_v;
+	texture_shader->y_u_v.fragment_sources[0] = texture_fragment_shader_y_u_v;
+	texture_shader->y_u_v.fragment_count = 1;
 
 	texture_shader->y_xuxv.vertex_source = vertex_shader;
-	texture_shader->y_xuxv.fragment_source = texture_fragment_shader_y_xuxv;
+	texture_shader->y_xuxv.fragment_sources[0] = texture_fragment_shader_y_xuxv;
+	texture_shader->y_xuxv.fragment_count = 1;
 }
 
 static int
@@ -3546,7 +3553,8 @@ compile_shaders(struct weston_compositor *ec)
 	compile_texture_shaders(&gr->texture_shader);
 
 	gr->solid_shader.vertex_source = vertex_shader;
-	gr->solid_shader.fragment_source = solid_fragment_shader;
+	gr->solid_shader.fragment_sources[0] = solid_fragment_shader;
+	gr->solid_shader.fragment_count = 1;
 
 	return 0;
 }
