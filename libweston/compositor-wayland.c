@@ -2637,6 +2637,10 @@ wayland_backend_create(struct weston_compositor *compositor,
 			           "support failed.\n");
 	}
 
+	if (weston_ycbcr_encoding_setup(compositor) < 0)
+		weston_log("Error: initializing ycbcr encoding "
+			   "support failed.\n");
+
 	return b;
 err_display:
 	wl_display_disconnect(b->parent.wl_display);

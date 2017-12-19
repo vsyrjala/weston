@@ -1272,6 +1272,9 @@ struct weston_surface {
 
 	/* An list of per seat pointer constraints. */
 	struct wl_list pointer_constraints;
+
+	const struct weston_color_encoding *ycbcr_encoding;
+	bool ycbcr_full_range;
 };
 
 struct weston_subsurface {
@@ -1959,6 +1962,8 @@ weston_pending_output_coldplug(struct weston_compositor *compositor);
 
 struct weston_output *
 weston_output_from_resource(struct wl_resource *resource);
+
+int weston_ycbcr_encoding_setup(struct weston_compositor *compositor);
 
 #ifdef  __cplusplus
 }
