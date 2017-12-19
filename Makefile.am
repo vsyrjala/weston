@@ -654,6 +654,23 @@ weston_simple_colorspace_CFLAGS = $(AM_CFLAGS) $(SIMPLE_EGL_CLIENT_CFLAGS)
 weston_simple_colorspace_LDADD = $(SIMPLE_EGL_CLIENT_LIBS) -lm
 endif
 
+if BUILD_SIMPLE_HDR_VIDEO_CLIENT
+demo_clients += weston-simple-hdr-video
+weston_simple_hdr_video_SOURCES = clients/simple-hdr-video.c \
+				   shared/os-compatibility.c \
+				   shared/gamma.c
+nodist_weston_simple_hdr_video_SOURCES =		\
+	protocol/xdg-shell-unstable-v6-protocol.c			\
+	protocol/xdg-shell-unstable-v6-client-protocol.h		\
+	protocol/colorspace-unstable-v1-protocol.c			\
+	protocol/colorspace-unstable-v1-client-protocol.h		\
+	protocol/ycbcr-encoding-unstable-v1-protocol.c			\
+	protocol/ycbcr-encoding-unstable-v1-client-protocol.h
+
+weston_simple_hdr_video_CFLAGS = $(AM_CFLAGS) $(SIMPLE_HDR_VIDEO_CLIENT_CFLAGS)
+weston_simple_hdr_video_LDADD = $(SIMPLE_HDR_VIDEO_CLIENT_LIBS) -lm
+endif
+
 if BUILD_SIMPLE_DMABUF_DRM_CLIENT
 demo_clients += weston-simple-dmabuf-drm
 weston_simple_dmabuf_drm_SOURCES =			\
