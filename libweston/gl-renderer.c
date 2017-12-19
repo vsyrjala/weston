@@ -186,6 +186,15 @@ struct gl_surface_state {
 	struct wl_listener renderer_destroy_listener;
 };
 
+struct gl_texture_shaders {
+	struct gl_shader rgba;
+	struct gl_shader rgbx;
+	struct gl_shader egl_external;
+	struct gl_shader y_uv;
+	struct gl_shader y_u_v;
+	struct gl_shader y_xuxv;
+};
+
 struct gl_renderer {
 	struct weston_renderer base;
 	int fragment_shader_debug;
@@ -228,12 +237,7 @@ struct gl_renderer {
 
 	int has_gl_texture_rg;
 
-	struct gl_shader texture_shader_rgba;
-	struct gl_shader texture_shader_rgbx;
-	struct gl_shader texture_shader_egl_external;
-	struct gl_shader texture_shader_y_uv;
-	struct gl_shader texture_shader_y_u_v;
-	struct gl_shader texture_shader_y_xuxv;
+	struct gl_texture_shaders texture_shader;
 	struct gl_shader invert_color_shader;
 	struct gl_shader solid_shader;
 	struct gl_shader *current_shader;
@@ -951,14 +955,14 @@ draw_view(struct weston_view *ev, struct weston_output *output,
 		pixman_region32_copy(&surface_opaque, &ev->surface->opaque);
 
 	if (pixman_region32_not_empty(&surface_opaque)) {
-		if (gs->shader == &gr->texture_shader_rgba) {
+		if (gs->shader == &gr->texture_shader.rgba) {
 			/* Special case for RGBA textures with possibly
 			 * bad data in alpha channel: use the shader
 			 * that forces texture alpha = 1.0.
 			 * Xwayland surfaces need this.
 			 */
-			use_shader(gr, &gr->texture_shader_rgbx);
-			shader_uniforms(&gr->texture_shader_rgbx, ev, output);
+			use_shader(gr, &gr->texture_shader.rgbx);
+			shader_uniforms(&gr->texture_shader.rgbx, ev, output);
 		}
 
 		if (ev->alpha < 1.0)
@@ -1078,7 +1082,7 @@ draw_output_borders(struct weston_output *output,
 {
 	struct gl_output_state *go = get_output_state(output);
 	struct gl_renderer *gr = get_renderer(output->compositor);
-	struct gl_shader *shader = &gr->texture_shader_rgba;
+	struct gl_shader *shader = &gr->texture_shader.rgba;
 	struct gl_border_image *top, *bottom, *left, *right;
 	struct weston_matrix matrix;
 	int full_width, full_height;
@@ -1556,25 +1560,25 @@ gl_renderer_attach_shm(struct weston_surface *es, struct weston_buffer *buffer,
 
 	switch (wl_shm_buffer_get_format(shm_buffer)) {
 	case WL_SHM_FORMAT_XRGB8888:
-		gs->shader = &gr->texture_shader_rgbx;
+		gs->shader = &gr->texture_shader.rgbx;
 		pitch = wl_shm_buffer_get_stride(shm_buffer) / 4;
 		gl_format[0] = GL_BGRA_EXT;
 		gl_pixel_type = GL_UNSIGNED_BYTE;
 		break;
 	case WL_SHM_FORMAT_ARGB8888:
-		gs->shader = &gr->texture_shader_rgba;
+		gs->shader = &gr->texture_shader.rgba;
 		pitch = wl_shm_buffer_get_stride(shm_buffer) / 4;
 		gl_format[0] = GL_BGRA_EXT;
 		gl_pixel_type = GL_UNSIGNED_BYTE;
 		break;
 	case WL_SHM_FORMAT_RGB565:
-		gs->shader = &gr->texture_shader_rgbx;
+		gs->shader = &gr->texture_shader.rgbx;
 		pitch = wl_shm_buffer_get_stride(shm_buffer) / 2;
 		gl_format[0] = GL_RGB;
 		gl_pixel_type = GL_UNSIGNED_SHORT_5_6_5;
 		break;
 	case WL_SHM_FORMAT_YUV420:
-		gs->shader = &gr->texture_shader_y_u_v;
+		gs->shader = &gr->texture_shader.y_u_v;
 		pitch = wl_shm_buffer_get_stride(shm_buffer);
 		gl_pixel_type = GL_UNSIGNED_BYTE;
 		num_planes = 3;
@@ -1605,17 +1609,17 @@ gl_renderer_attach_shm(struct weston_surface *es, struct weston_buffer *buffer,
 		gs->hsub[1] = 2;
 		gs->vsub[1] = 2;
 		if (gr->has_gl_texture_rg) {
-			gs->shader = &gr->texture_shader_y_uv;
+			gs->shader = &gr->texture_shader.y_uv;
 			gl_format[0] = GL_R8_EXT;
 			gl_format[1] = GL_RG8_EXT;
 		} else {
-			gs->shader = &gr->texture_shader_y_xuxv;
+			gs->shader = &gr->texture_shader.y_xuxv;
 			gl_format[0] = GL_LUMINANCE;
 			gl_format[1] = GL_LUMINANCE_ALPHA;
 		}
 		break;
 	case WL_SHM_FORMAT_YUYV:
-		gs->shader = &gr->texture_shader_y_xuxv;
+		gs->shader = &gr->texture_shader.y_xuxv;
 		pitch = wl_shm_buffer_get_stride(shm_buffer) / 2;
 		gl_pixel_type = GL_UNSIGNED_BYTE;
 		num_planes = 2;
@@ -1689,24 +1693,24 @@ gl_renderer_attach_egl(struct weston_surface *es, struct weston_buffer *buffer,
 	case EGL_TEXTURE_RGBA:
 	default:
 		num_planes = 1;
-		gs->shader = &gr->texture_shader_rgba;
+		gs->shader = &gr->texture_shader.rgba;
 		break;
 	case EGL_TEXTURE_EXTERNAL_WL:
 		num_planes = 1;
 		gs->target = GL_TEXTURE_EXTERNAL_OES;
-		gs->shader = &gr->texture_shader_egl_external;
+		gs->shader = &gr->texture_shader.egl_external;
 		break;
 	case EGL_TEXTURE_Y_UV_WL:
 		num_planes = 2;
-		gs->shader = &gr->texture_shader_y_uv;
+		gs->shader = &gr->texture_shader.y_uv;
 		break;
 	case EGL_TEXTURE_Y_U_V_WL:
 		num_planes = 3;
-		gs->shader = &gr->texture_shader_y_u_v;
+		gs->shader = &gr->texture_shader.y_u_v;
 		break;
 	case EGL_TEXTURE_Y_XUXV_WL:
 		num_planes = 2;
-		gs->shader = &gr->texture_shader_y_xuxv;
+		gs->shader = &gr->texture_shader.y_xuxv;
 		break;
 	}
 
@@ -2014,13 +2018,13 @@ import_yuv_dmabuf(struct gl_renderer *gr,
 
 	switch (format->texture_type) {
 	case EGL_TEXTURE_Y_XUXV_WL:
-		image->shader = &gr->texture_shader_y_xuxv;
+		image->shader = &gr->texture_shader.y_xuxv;
 		break;
 	case EGL_TEXTURE_Y_UV_WL:
-		image->shader = &gr->texture_shader_y_uv;
+		image->shader = &gr->texture_shader.y_uv;
 		break;
 	case EGL_TEXTURE_Y_U_V_WL:
-		image->shader = &gr->texture_shader_y_u_v;
+		image->shader = &gr->texture_shader.y_u_v;
 		break;
 	default:
 		assert(false);
@@ -2066,10 +2070,10 @@ import_dmabuf(struct gl_renderer *gr,
 
 		switch (image->target) {
 		case GL_TEXTURE_2D:
-			image->shader = &gr->texture_shader_rgba;
+			image->shader = &gr->texture_shader.rgba;
 			break;
 		default:
-			image->shader = &gr->texture_shader_egl_external;
+			image->shader = &gr->texture_shader.egl_external;
 		}
 	} else {
 		if (!import_yuv_dmabuf(gr, image)) {
@@ -3512,36 +3516,50 @@ gl_renderer_display(struct weston_compositor *ec)
 	return get_renderer(ec)->egl_display;
 }
 
+static void
+compile_texture_shaders(struct gl_texture_shaders *texture_shader)
+{
+	texture_shader->rgba.vertex_source = vertex_shader;
+	texture_shader->rgba.fragment_source = texture_fragment_shader_rgba;
+
+	texture_shader->rgbx.vertex_source = vertex_shader;
+	texture_shader->rgbx.fragment_source = texture_fragment_shader_rgbx;
+
+	texture_shader->egl_external.vertex_source = vertex_shader;
+	texture_shader->egl_external.fragment_source = texture_fragment_shader_egl_external;
+
+	texture_shader->y_uv.vertex_source = vertex_shader;
+	texture_shader->y_uv.fragment_source = texture_fragment_shader_y_uv;
+
+	texture_shader->y_u_v.vertex_source = vertex_shader;
+	texture_shader->y_u_v.fragment_source = texture_fragment_shader_y_u_v;
+
+	texture_shader->y_xuxv.vertex_source = vertex_shader;
+	texture_shader->y_xuxv.fragment_source = texture_fragment_shader_y_xuxv;
+}
+
 static int
 compile_shaders(struct weston_compositor *ec)
 {
 	struct gl_renderer *gr = get_renderer(ec);
 
-	gr->texture_shader_rgba.vertex_source = vertex_shader;
-	gr->texture_shader_rgba.fragment_source = texture_fragment_shader_rgba;
-
-	gr->texture_shader_rgbx.vertex_source = vertex_shader;
-	gr->texture_shader_rgbx.fragment_source = texture_fragment_shader_rgbx;
-
-	gr->texture_shader_egl_external.vertex_source = vertex_shader;
-	gr->texture_shader_egl_external.fragment_source =
-		texture_fragment_shader_egl_external;
-
-	gr->texture_shader_y_uv.vertex_source = vertex_shader;
-	gr->texture_shader_y_uv.fragment_source = texture_fragment_shader_y_uv;
-
-	gr->texture_shader_y_u_v.vertex_source = vertex_shader;
-	gr->texture_shader_y_u_v.fragment_source =
-		texture_fragment_shader_y_u_v;
-
-	gr->texture_shader_y_xuxv.vertex_source = vertex_shader;
-	gr->texture_shader_y_xuxv.fragment_source =
-		texture_fragment_shader_y_xuxv;
+	compile_texture_shaders(&gr->texture_shader);
 
 	gr->solid_shader.vertex_source = vertex_shader;
 	gr->solid_shader.fragment_source = solid_fragment_shader;
 
 	return 0;
+}
+
+static void
+release_texture_shaders(struct gl_texture_shaders *texture_shader)
+{
+	shader_release(&texture_shader->rgba);
+	shader_release(&texture_shader->rgbx);
+	shader_release(&texture_shader->egl_external);
+	shader_release(&texture_shader->y_uv);
+	shader_release(&texture_shader->y_u_v);
+	shader_release(&texture_shader->y_xuxv);
 }
 
 static void
@@ -3555,12 +3573,7 @@ fragment_debug_binding(struct weston_keyboard *keyboard,
 
 	gr->fragment_shader_debug ^= 1;
 
-	shader_release(&gr->texture_shader_rgba);
-	shader_release(&gr->texture_shader_rgbx);
-	shader_release(&gr->texture_shader_egl_external);
-	shader_release(&gr->texture_shader_y_uv);
-	shader_release(&gr->texture_shader_y_u_v);
-	shader_release(&gr->texture_shader_y_xuxv);
+	release_texture_shaders(&gr->texture_shader);
 	shader_release(&gr->solid_shader);
 
 	/* Force use_shader() to call glUseProgram(), since we need to use
