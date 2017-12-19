@@ -58,6 +58,8 @@
 #include "shared/helpers.h"
 #include "shared/platform.h"
 #include "shared/color_encoding.h"
+#include "shared/colorspace.h"
+#include "shared/csc.h"
 #include "shared/timespec-util.h"
 #include "weston-egl-ext.h"
 
@@ -68,6 +70,7 @@ struct gl_shader {
 	GLint tex_uniforms[3];
 	GLint alpha_uniform;
 	GLint color_uniform;
+	GLint csc_uniform;
 	GLint yuv2rgb_uniform;
 	GLint fragment_count;
 	const char *vertex_source, *fragment_sources[3];
@@ -158,6 +161,7 @@ struct gl_surface_state {
 	struct gl_shader *shader;
 
 	struct weston_matrix yuv2rgb_matrix;
+	struct weston_matrix csc_matrix;
 
 	GLuint textures[3];
 	int num_textures;
@@ -876,11 +880,28 @@ use_shader(struct gl_renderer *gr, struct gl_shader *shader)
 }
 
 static void
+convert_matrix_3x3(GLfloat dst[9],
+		   const struct weston_matrix *matrix)
+{
+	unsigned i, j;
+
+	for (i = 0; i < 3; i++) {
+		for (j = 0; j < 3; j++)
+			dst[i * 3 + j] = matrix->d[i * 4 + j];
+	}
+}
+
+static void
 shader_uniforms_identity(struct gl_shader *shader)
 {
 	struct weston_matrix matrix;
+	GLfloat m[9];
 
 	weston_matrix_init(&matrix);
+
+	convert_matrix_3x3(m, &matrix);
+	glUniformMatrix3fv(shader->csc_uniform,
+			   1, GL_FALSE, m);
 
 	glUniformMatrix4fv(shader->yuv2rgb_uniform,
 			   1, GL_FALSE, matrix.d);
@@ -894,11 +915,17 @@ shader_uniforms(struct gl_shader *shader,
 	int i;
 	struct gl_surface_state *gs = get_surface_state(view->surface);
 	struct gl_output_state *go = get_output_state(output);
+	GLfloat m[9];
 
 	glUniformMatrix4fv(shader->proj_uniform,
 			   1, GL_FALSE, go->output_matrix.d);
 	glUniform4fv(shader->color_uniform, 1, gs->color);
 	glUniform1f(shader->alpha_uniform, view->alpha);
+
+	//weston_matrix_print(&gs->csc_matrix);
+	convert_matrix_3x3(m, &gs->csc_matrix);
+	glUniformMatrix3fv(shader->csc_uniform,
+			   1, GL_FALSE, m);
 
 	//weston_matrix_print(&gs->yuv2rgb_matrix);
 	glUniformMatrix4fv(shader->yuv2rgb_uniform,
@@ -1563,6 +1590,34 @@ ensure_textures(struct gl_surface_state *gs, int num_textures)
 	glBindTexture(gs->target, 0);
 }
 
+static void setup_colors(struct gl_renderer *gr,
+			 struct weston_surface *es,
+			 bool is_yuv)
+{
+	struct gl_surface_state *gs = get_surface_state(es);
+	const struct weston_colorspace *src_cs, *dst_cs;
+	const char *src_colorspace = NULL;
+
+	if (es->colorspace)
+		src_colorspace = es->colorspace;
+
+	/* FIXME */
+	if (is_yuv) {
+		if (!src_colorspace)
+			src_colorspace = "BT.709";
+	} else {
+		if (!src_colorspace)
+			src_colorspace = "sRGB";
+	}
+
+	if (!strcmp(src_colorspace, "Undefined"))
+		src_colorspace = gr->colorspace;
+
+	src_cs = weston_colorspace_lookup(src_colorspace);
+	dst_cs = weston_colorspace_lookup(gr->colorspace);
+	weston_csc_matrix(&gs->csc_matrix, dst_cs, src_cs, 1.0f);
+}
+
 static void
 gl_renderer_attach_shm(struct weston_surface *es, struct weston_buffer *buffer,
 		       struct wl_shm_buffer *shm_buffer)
@@ -1607,6 +1662,8 @@ gl_renderer_attach_shm(struct weston_surface *es, struct weston_buffer *buffer,
 		weston_ycbcr2rgb_matrix(&gs->yuv2rgb_matrix, e,
 					1.0f, es->ycbcr_full_range);
 	}
+
+	setup_colors(gr, es, is_yuv);
 
 	switch (wl_shm_buffer_get_format(shm_buffer)) {
 	case WL_SHM_FORMAT_XRGB8888:
@@ -1754,6 +1811,8 @@ gl_renderer_attach_egl(struct weston_surface *es, struct weston_buffer *buffer,
 		weston_ycbcr2rgb_matrix(&gs->yuv2rgb_matrix, e,
 					1.0f, es->ycbcr_full_range);
 	}
+
+	setup_colors(gr, es, is_yuv);
 
 	for (i = 0; i < gs->num_images; i++) {
 		egl_image_unref(gs->images[i]);
@@ -2357,6 +2416,8 @@ gl_renderer_attach_dmabuf(struct weston_surface *surface,
 	weston_ycbcr2rgb_matrix(&gs->yuv2rgb_matrix, e,
 				1.0f, surface->ycbcr_full_range);
 
+	setup_colors(gr, surface, false);
+
 	gs->shader = image->shader;
 	gs->pitch = buffer->width;
 	gs->height = buffer->height;
@@ -2675,6 +2736,7 @@ static const char vertex_shader[] =
 #define FRAGMENT_CONVERT_YUV						\
 	"  vec4 yuv = vec4(y, u, v, 1.0);\n"				\
 	"  vec3 rgb = (yuv2rgb * yuv).rgb;\n"				\
+	"  rgb = csc * rgb;\n"						\
 	"  gl_FragColor = alpha * vec4(rgb, 1.0);\n"
 
 static const char fragment_debug[] =
@@ -2688,6 +2750,7 @@ static const char texture_fragment_header_2d[] =
 	"varying vec2 v_texcoord;\n"
 	"uniform sampler2D tex;\n"
 	"uniform float alpha;\n"
+	"uniform mat3 csc;\n"
 	;
 
 static const char texture_fragment_header_egl_external[] =
@@ -2696,6 +2759,7 @@ static const char texture_fragment_header_egl_external[] =
 	"varying vec2 v_texcoord;\n"
 	"uniform samplerExternalOES tex;\n"
 	"uniform float alpha;\n"
+	"uniform mat3 csc;\n"
 	;
 
 static const char texture_fragment_shader_rgba[] =
@@ -2703,6 +2767,7 @@ static const char texture_fragment_shader_rgba[] =
 	"{\n"
 	"   vec3 rgb = texture2D(tex, v_texcoord).rgb;\n"
 	"   float a = texture2D(tex, v_texcoord).a;\n"
+	"   rgb = csc * rgb;\n"
 	"   gl_FragColor = alpha * vec4(rgb, a);\n"
 	;
 
@@ -2711,6 +2776,7 @@ static const char texture_fragment_shader_rgbx[] =
 	"{\n"
 	"   vec3 rgb = texture2D(tex, v_texcoord).rgb;\n"
 	"   float a = texture2D(tex, v_texcoord).a;\n"
+	"   rgb = csc * rgb;\n"
 	"   gl_FragColor = alpha * vec4(rgb, 1.0);\n"
 	;
 
@@ -2719,6 +2785,7 @@ static const char texture_fragment_shader_egl_external[] =
 	"{\n"
 	"   vec3 rgb = texture2D(tex, v_texcoord).rgb;\n"
 	"   float a = texture2D(tex, v_texcoord).a;\n"
+	"   rgb = csc * rgb;\n"
 	"   gl_FragColor = alpha * vec4(rgb, a);\n"
 	;
 
@@ -2728,6 +2795,7 @@ static const char texture_fragment_header_y_uv[] =
 	"uniform sampler2D tex1;\n"
 	"varying vec2 v_texcoord;\n"
 	"uniform float alpha;\n"
+	"uniform mat3 csc;\n"
 	"uniform mat4 yuv2rgb;\n"
 	;
 
@@ -2746,6 +2814,7 @@ static const char texture_fragment_header_y_u_v[] =
 	"uniform sampler2D tex2;\n"
 	"varying vec2 v_texcoord;\n"
 	"uniform float alpha;\n"
+	"uniform mat3 csc;\n"
 	"uniform mat4 yuv2rgb;\n"
 	;
 
@@ -2763,6 +2832,7 @@ static const char texture_fragment_header_y_xuxv[] =
 	"uniform sampler2D tex1;\n"
 	"varying vec2 v_texcoord;\n"
 	"uniform float alpha;\n"
+	"uniform mat3 csc;\n"
 	"uniform mat4 yuv2rgb;\n"
 	;
 
@@ -2849,6 +2919,7 @@ shader_init(struct gl_shader *shader, struct gl_renderer *renderer,
 	shader->tex_uniforms[2] = glGetUniformLocation(shader->program, "tex2");
 	shader->alpha_uniform = glGetUniformLocation(shader->program, "alpha");
 	shader->color_uniform = glGetUniformLocation(shader->program, "color");
+	shader->csc_uniform = glGetUniformLocation(shader->program, "csc");
 	shader->yuv2rgb_uniform = glGetUniformLocation(shader->program, "yuv2rgb");
 
 	return 0;
