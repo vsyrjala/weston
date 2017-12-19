@@ -111,6 +111,8 @@ libweston_@LIBWESTON_MAJOR@_la_SOURCES =			\
 	libweston/pixel-formats.h			\
 	shared/color_encoding.c				\
 	shared/color_encoding.h				\
+	shared/colorspace.c				\
+	shared/colorspace.h				\
 	shared/helpers.h				\
 	shared/matrix.c					\
 	shared/matrix.h					\
