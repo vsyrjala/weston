@@ -2686,7 +2686,7 @@ static const char solid_fragment_shader[] =
 	"uniform float alpha;\n"
 	"void main()\n"
 	"{\n"
-	"   gl_FragColor = alpha * color\n;"
+	"   gl_FragColor = alpha * color;\n"
 	;
 
 static int
