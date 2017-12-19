@@ -56,6 +56,7 @@
 #include "compositor.h"
 #include "viewporter-server-protocol.h"
 #include "presentation-time-server-protocol.h"
+#include "shared/colorspace.h"
 #include "shared/helpers.h"
 #include "shared/os-compatibility.h"
 #include "shared/string-helpers.h"
@@ -4463,6 +4464,12 @@ weston_output_transform_scale_init(struct weston_output *output, uint32_t transf
 }
 
 static void
+weston_output_colorspace_init(struct weston_output *output, const char *colorspace)
+{
+	output->colorspace = colorspace;
+}
+
+static void
 weston_output_init_geometry(struct weston_output *output, int x, int y)
 {
 	output->x = x;
@@ -4701,6 +4708,33 @@ weston_output_set_transform(struct weston_output *output,
 	output->transform = transform;
 }
 
+/** Sets the output colorsapce for a given output.
+ *
+ * \param output     The weston_output object that the colorspace is set for.
+ * \param colorspace Colorspace value for the given output.
+ *
+ * It only supports setting colorspace for an output that is
+ * not enabled and it can only be ran once.
+ *
+ * Refer to wl_output::colorspace section located at
+ * https://wayland.freedesktop.org/docs/html/apa.html#protocol-spec-wl_output
+ * for list of values that can be passed to this function.
+ *
+xo * \memberof weston_output
+ */
+WL_EXPORT void
+weston_output_set_colorspace(struct weston_output *output,
+			     const char *colorspace)
+{
+	/* We can only set transform on a disabled output */
+	assert(!output->enabled);
+
+	/* We only want to set transform once */
+	assert(!output->colorspace);
+
+	output->colorspace = colorspace;
+}
+
 /** Initializes a weston_output object with enough data so
  ** an output can be configured.
  *
@@ -4736,6 +4770,7 @@ weston_output_init(struct weston_output *output,
 	output->scale = 0;
 	/* Can't use -1 on uint32_t and 0 is valid enum value */
 	output->transform = UINT32_MAX;
+	output->colorspace = NULL;
 
 	pixman_region32_init(&output->previous_damage);
 	pixman_region32_init(&output->region);
@@ -4825,6 +4860,9 @@ weston_output_enable(struct weston_output *output)
 	/* Make sure we have a transform set */
 	assert(output->transform != UINT32_MAX);
 
+	/* Make sure we have a colorspace set */
+	assert(output->colorspace);
+
 	output->x = x;
 	output->y = y;
 	output->dirty = 1;
@@ -4832,6 +4870,8 @@ weston_output_enable(struct weston_output *output)
 
 	weston_output_transform_scale_init(output, output->transform, output->scale);
 	weston_output_init_zoom(output);
+
+	weston_output_colorspace_init(output, output->colorspace);
 
 	weston_output_init_geometry(output, x, y);
 	weston_output_damage(output);

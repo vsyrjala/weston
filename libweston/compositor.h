@@ -163,6 +163,9 @@ struct weston_output {
 	/** From output buffer to global coordinates. */
 	struct weston_matrix inverse_matrix;
 
+	/** Output colorspace */
+	const char *colorspace;
+
 	struct wl_list animation_list;
 	int32_t x, y, width, height;
 	int32_t mm_width, mm_height;
@@ -1916,6 +1919,8 @@ weston_load_module(const char *name, const char *entrypoint);
 
 int
 weston_parse_transform(const char *transform, uint32_t *out);
+int
+weston_parse_colorspace(const char *colorspace, const char **out);
 
 const char *
 weston_transform_to_string(uint32_t output_transform);
@@ -1943,6 +1948,10 @@ weston_output_set_scale(struct weston_output *output,
 void
 weston_output_set_transform(struct weston_output *output,
 			    uint32_t transform);
+
+void
+weston_output_set_colorspace(struct weston_output *output,
+			     const char *colorspace);
 
 void
 weston_output_init(struct weston_output *output,

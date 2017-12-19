@@ -259,6 +259,8 @@ struct gl_renderer {
 	PFNEGLCREATESYNCKHRPROC create_sync;
 	PFNEGLDESTROYSYNCKHRPROC destroy_sync;
 	PFNEGLDUPNATIVEFENCEFDANDROIDPROC dup_native_fence_fd;
+
+	const char *colorspace;
 };
 
 enum timeline_render_point_type {
@@ -3132,6 +3134,9 @@ gl_renderer_output_window_create(struct weston_output *output,
 	ret = gl_renderer_output_create(output, egl_surface);
 	if (ret < 0)
 		weston_platform_destroy_egl_surface(gr->egl_display, egl_surface);
+
+	/* FIXME should be per output */
+	gr->colorspace = output->colorspace;
 
 	return ret;
 }
