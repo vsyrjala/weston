@@ -3213,9 +3213,6 @@ gl_renderer_setup_egl_extensions(struct weston_compositor *ec)
 		gr->has_dmabuf_import_modifiers = 1;
 	}
 
-	if (weston_check_egl_extension(extensions, "GL_EXT_texture_rg"))
-		gr->has_gl_texture_rg = 1;
-
 	if (weston_check_egl_extension(extensions, "EGL_KHR_fence_sync") &&
 	    weston_check_egl_extension(extensions, "EGL_ANDROID_native_fence_sync")) {
 		gr->create_sync =
@@ -3652,6 +3649,9 @@ gl_renderer_setup(struct weston_compositor *ec, EGLSurface egl_surface)
 
 	if (weston_check_egl_extension(extensions, "GL_OES_EGL_image_external"))
 		gr->has_egl_image_external = 1;
+
+	if (weston_check_egl_extension(extensions, "GL_EXT_texture_rg"))
+		gr->has_gl_texture_rg = 1;
 
 	glActiveTexture(GL_TEXTURE0);
 
