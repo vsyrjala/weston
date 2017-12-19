@@ -143,6 +143,7 @@ struct dmabuf_image {
 	enum import_type import_type;
 	GLenum target;
 	struct gl_shader *shader;
+	struct gl_shader *st2084_shader;
 };
 
 struct yuv_plane_descriptor {
@@ -252,6 +253,7 @@ struct gl_renderer {
 	int has_gl_texture_rg;
 
 	struct gl_texture_shaders texture_shader;
+	struct gl_texture_shaders st2084_texture_shader;
 	struct gl_shader invert_color_shader;
 	struct gl_shader solid_shader;
 	struct gl_shader *current_shader;
@@ -1041,6 +1043,15 @@ draw_view(struct weston_view *ev, struct weston_output *output,
 			use_shader(gr, &gr->texture_shader.rgbx);
 			shader_uniforms(&gr->texture_shader.rgbx, ev, output);
 		}
+		if (gs->shader == &gr->st2084_texture_shader.rgba) {
+			/* Special case for RGBA textures with possibly
+			 * bad data in alpha channel: use the shader
+			 * that forces texture alpha = 1.0.
+			 * Xwayland surfaces need this.
+			 */
+			use_shader(gr, &gr->st2084_texture_shader.rgbx);
+			shader_uniforms(&gr->st2084_texture_shader.rgbx, ev, output);
+		}
 
 		if (ev->alpha < 1.0)
 			glEnable(GL_BLEND);
@@ -1615,7 +1626,7 @@ ensure_textures(struct gl_surface_state *gs, int num_textures)
 	glBindTexture(gs->target, 0);
 }
 
-static void setup_colors(struct gl_renderer *gr,
+static bool setup_colors(struct gl_renderer *gr,
 			 struct weston_surface *es,
 			 bool is_yuv)
 {
@@ -1650,6 +1661,8 @@ static void setup_colors(struct gl_renderer *gr,
 	weston_csc_matrix(&gs->csc_matrix, dst_cs, src_cs, 1.0f);
 
 	weston_degamma_lookup(&gs->degamma_coeff, src_gamma);
+
+	return !strcmp(src_gamma, "ST2084");
 }
 
 static void
@@ -1663,7 +1676,7 @@ gl_renderer_attach_shm(struct weston_surface *es, struct weston_buffer *buffer,
 	GLenum gl_pixel_type;
 	int pitch;
 	int num_planes;
-	bool is_yuv;
+	bool is_yuv, st2084;
 
 	buffer->shm_buffer = shm_buffer;
 	buffer->width = wl_shm_buffer_get_width(shm_buffer);
@@ -1697,29 +1710,41 @@ gl_renderer_attach_shm(struct weston_surface *es, struct weston_buffer *buffer,
 					1.0f, es->ycbcr_full_range);
 	}
 
-	setup_colors(gr, es, is_yuv);
+	st2084 = setup_colors(gr, es, is_yuv);
 
 	switch (wl_shm_buffer_get_format(shm_buffer)) {
 	case WL_SHM_FORMAT_XRGB8888:
-		gs->shader = &gr->texture_shader.rgbx;
+		if (st2084)
+			gs->shader = &gr->st2084_texture_shader.rgbx;
+		else
+			gs->shader = &gr->texture_shader.rgbx;
 		pitch = wl_shm_buffer_get_stride(shm_buffer) / 4;
 		gl_format[0] = GL_BGRA_EXT;
 		gl_pixel_type = GL_UNSIGNED_BYTE;
 		break;
 	case WL_SHM_FORMAT_ARGB8888:
-		gs->shader = &gr->texture_shader.rgba;
+		if (st2084)
+			gs->shader = &gr->st2084_texture_shader.rgba;
+		else
+			gs->shader = &gr->texture_shader.rgba;
 		pitch = wl_shm_buffer_get_stride(shm_buffer) / 4;
 		gl_format[0] = GL_BGRA_EXT;
 		gl_pixel_type = GL_UNSIGNED_BYTE;
 		break;
 	case WL_SHM_FORMAT_RGB565:
-		gs->shader = &gr->texture_shader.rgbx;
+		if (st2084)
+			gs->shader = &gr->st2084_texture_shader.rgbx;
+		else
+			gs->shader = &gr->texture_shader.rgbx;
 		pitch = wl_shm_buffer_get_stride(shm_buffer) / 2;
 		gl_format[0] = GL_RGB;
 		gl_pixel_type = GL_UNSIGNED_SHORT_5_6_5;
 		break;
 	case WL_SHM_FORMAT_YUV420:
-		gs->shader = &gr->texture_shader.y_u_v;
+		if (st2084)
+			gs->shader = &gr->st2084_texture_shader.y_u_v;
+		else
+			gs->shader = &gr->texture_shader.y_u_v;
 		pitch = wl_shm_buffer_get_stride(shm_buffer);
 		gl_pixel_type = GL_UNSIGNED_BYTE;
 		num_planes = 3;
@@ -1750,17 +1775,26 @@ gl_renderer_attach_shm(struct weston_surface *es, struct weston_buffer *buffer,
 		gs->hsub[1] = 2;
 		gs->vsub[1] = 2;
 		if (gr->has_gl_texture_rg) {
-			gs->shader = &gr->texture_shader.y_uv;
+			if (st2084)
+				gs->shader = &gr->st2084_texture_shader.y_uv;
+			else
+				gs->shader = &gr->texture_shader.y_uv;
 			gl_format[0] = GL_R8_EXT;
 			gl_format[1] = GL_RG8_EXT;
 		} else {
-			gs->shader = &gr->texture_shader.y_xuxv;
+			if (st2084)
+				gs->shader = &gr->st2084_texture_shader.y_xuxv;
+			else
+				gs->shader = &gr->texture_shader.y_xuxv;
 			gl_format[0] = GL_LUMINANCE;
 			gl_format[1] = GL_LUMINANCE_ALPHA;
 		}
 		break;
 	case WL_SHM_FORMAT_YUYV:
-		gs->shader = &gr->texture_shader.y_xuxv;
+		if (st2084)
+			gs->shader = &gr->st2084_texture_shader.y_xuxv;
+		else
+			gs->shader = &gr->texture_shader.y_xuxv;
 		pitch = wl_shm_buffer_get_stride(shm_buffer) / 2;
 		gl_pixel_type = GL_UNSIGNED_BYTE;
 		num_planes = 2;
@@ -1814,7 +1848,7 @@ gl_renderer_attach_egl(struct weston_surface *es, struct weston_buffer *buffer,
 	struct gl_surface_state *gs = get_surface_state(es);
 	EGLint attribs[3];
 	int i, num_planes;
-	bool is_yuv;
+	bool is_yuv, st2084;
 
 	buffer->legacy_buffer = (struct wl_buffer *)buffer->resource;
 	gr->query_buffer(gr->egl_display, buffer->legacy_buffer,
@@ -1846,7 +1880,7 @@ gl_renderer_attach_egl(struct weston_surface *es, struct weston_buffer *buffer,
 					1.0f, es->ycbcr_full_range);
 	}
 
-	setup_colors(gr, es, is_yuv);
+	st2084 = setup_colors(gr, es, is_yuv);
 
 	for (i = 0; i < gs->num_images; i++) {
 		egl_image_unref(gs->images[i]);
@@ -1859,24 +1893,39 @@ gl_renderer_attach_egl(struct weston_surface *es, struct weston_buffer *buffer,
 	case EGL_TEXTURE_RGBA:
 	default:
 		num_planes = 1;
-		gs->shader = &gr->texture_shader.rgba;
+		if (st2084)
+			gs->shader = &gr->st2084_texture_shader.rgba;
+		else
+			gs->shader = &gr->texture_shader.rgba;
 		break;
 	case EGL_TEXTURE_EXTERNAL_WL:
 		num_planes = 1;
 		gs->target = GL_TEXTURE_EXTERNAL_OES;
-		gs->shader = &gr->texture_shader.egl_external;
+		if (st2084)
+			gs->shader = &gr->st2084_texture_shader.egl_external;
+		else
+			gs->shader = &gr->texture_shader.egl_external;
 		break;
 	case EGL_TEXTURE_Y_UV_WL:
 		num_planes = 2;
-		gs->shader = &gr->texture_shader.y_uv;
+		if (st2084)
+			gs->shader = &gr->st2084_texture_shader.y_uv;
+		else
+			gs->shader = &gr->texture_shader.y_uv;
 		break;
 	case EGL_TEXTURE_Y_U_V_WL:
 		num_planes = 3;
-		gs->shader = &gr->texture_shader.y_u_v;
+		if (st2084)
+			gs->shader = &gr->st2084_texture_shader.y_u_v;
+		else
+			gs->shader = &gr->texture_shader.y_u_v;
 		break;
 	case EGL_TEXTURE_Y_XUXV_WL:
 		num_planes = 2;
-		gs->shader = &gr->texture_shader.y_xuxv;
+		if (st2084)
+			gs->shader = &gr->st2084_texture_shader.y_xuxv;
+		else
+			gs->shader = &gr->texture_shader.y_xuxv;
 		break;
 	}
 
@@ -2184,12 +2233,15 @@ import_yuv_dmabuf(struct gl_renderer *gr,
 
 	switch (format->texture_type) {
 	case EGL_TEXTURE_Y_XUXV_WL:
+		image->st2084_shader = &gr->st2084_texture_shader.y_xuxv;
 		image->shader = &gr->texture_shader.y_xuxv;
 		break;
 	case EGL_TEXTURE_Y_UV_WL:
+		image->st2084_shader = &gr->st2084_texture_shader.y_uv;
 		image->shader = &gr->texture_shader.y_uv;
 		break;
 	case EGL_TEXTURE_Y_U_V_WL:
+		image->st2084_shader = &gr->st2084_texture_shader.y_u_v;
 		image->shader = &gr->texture_shader.y_u_v;
 		break;
 	default:
@@ -2236,9 +2288,11 @@ import_dmabuf(struct gl_renderer *gr,
 
 		switch (image->target) {
 		case GL_TEXTURE_2D:
+			image->st2084_shader = &gr->st2084_texture_shader.rgba;
 			image->shader = &gr->texture_shader.rgba;
 			break;
 		default:
+			image->st2084_shader = &gr->st2084_texture_shader.egl_external;
 			image->shader = &gr->texture_shader.egl_external;
 		}
 	} else {
@@ -2386,6 +2440,7 @@ gl_renderer_attach_dmabuf(struct weston_surface *surface,
 	const struct weston_color_encoding *e;
 	int i;
 	int ret;
+	bool st2084;
 
 	if (!gr->has_dmabuf_import) {
 		linux_dmabuf_buffer_send_server_error(dmabuf,
@@ -2450,9 +2505,12 @@ gl_renderer_attach_dmabuf(struct weston_surface *surface,
 	weston_ycbcr2rgb_matrix(&gs->yuv2rgb_matrix, e,
 				1.0f, surface->ycbcr_full_range);
 
-	setup_colors(gr, surface, false);
+	st2084 = setup_colors(gr, surface, false);
 
-	gs->shader = image->shader;
+	if (st2084)
+		gs->shader = image->st2084_shader;
+	else
+		gs->shader = image->shader;
 	gs->pitch = buffer->width;
 	gs->height = buffer->height;
 	gs->buffer_type = BUFFER_TYPE_EGL;
@@ -2770,6 +2828,12 @@ static const char fragment_degamma[] =
 	POW3 DEGAMMA
 	"vec3 frag_degamma(vec3 v, vec4 c) {\n"
 	"    return degamma(v, c.x, c.y, c.z, c.w);\n"
+	"}\n";
+
+static const char fragment_degamma_st2084[] =
+	POW3 ST2084_EOTF
+	"vec3 frag_degamma(vec3 v, vec4 c) {\n"
+	"    return st2084_eotf(v);\n"
 	"}\n";
 
 /* Declare common fragment shader uniforms */
@@ -3782,6 +3846,7 @@ compile_shaders(struct weston_compositor *ec)
 	struct gl_renderer *gr = get_renderer(ec);
 
 	compile_texture_shaders(&gr->texture_shader, fragment_degamma);
+	compile_texture_shaders(&gr->st2084_texture_shader, fragment_degamma_st2084);
 
 	gr->solid_shader.vertex_source = vertex_shader;
 	gr->solid_shader.fragment_sources[0] = solid_fragment_shader;
@@ -3813,6 +3878,7 @@ fragment_debug_binding(struct weston_keyboard *keyboard,
 	gr->fragment_shader_debug ^= 1;
 
 	release_texture_shaders(&gr->texture_shader);
+	release_texture_shaders(&gr->st2084_texture_shader);
 	shader_release(&gr->solid_shader);
 
 	/* Force use_shader() to call glUseProgram(), since we need to use
