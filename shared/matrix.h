@@ -67,6 +67,9 @@ int
 weston_matrix_invert(struct weston_matrix *inverse,
 		     const struct weston_matrix *matrix);
 
+void
+weston_matrix_print(const struct weston_matrix *matrix);
+
 #ifdef UNIT_TEST
 #  define MATRIX_TEST_EXPORT WL_EXPORT
 

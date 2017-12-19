@@ -29,6 +29,7 @@
 #include <float.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <math.h>
 
 #ifdef IN_WESTON
@@ -284,4 +285,16 @@ weston_matrix_invert(struct weston_matrix *inverse,
 	inverse->type = matrix->type;
 
 	return 0;
+}
+
+WL_EXPORT void
+weston_matrix_print(const struct weston_matrix *matrix)
+{
+	unsigned i, j;
+
+	for (i = 0; i < 4; i++) {
+		for (j = 0; j < 4; j++)
+			printf("%.6f ", matrix->d[j * 4 + i]);
+		printf("\n");
+	}
 }
