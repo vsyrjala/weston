@@ -1275,6 +1275,8 @@ struct weston_surface {
 
 	const struct weston_color_encoding *ycbcr_encoding;
 	bool ycbcr_full_range;
+	const char *colorspace;
+	const char *gamma;
 };
 
 struct weston_subsurface {
@@ -1964,6 +1966,7 @@ struct weston_output *
 weston_output_from_resource(struct wl_resource *resource);
 
 int weston_ycbcr_encoding_setup(struct weston_compositor *compositor);
+int weston_colorspace_setup(struct weston_compositor *compositor);
 
 #ifdef  __cplusplus
 }

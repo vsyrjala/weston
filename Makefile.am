@@ -89,6 +89,7 @@ libweston_@LIBWESTON_MAJOR@_la_SOURCES =			\
 	libweston/compositor-rdp.h			\
 	libweston/compositor-wayland.h			\
 	libweston/compositor-x11.h			\
+	libweston/colorspace.c				\
 	libweston/ycbcr_encoding.c			\
 	libweston/input.c				\
 	libweston/data-device.c				\
@@ -188,7 +189,9 @@ nodist_libweston_@LIBWESTON_MAJOR@_la_SOURCES =				\
 	protocol/pointer-constraints-unstable-v1-protocol.c		\
 	protocol/pointer-constraints-unstable-v1-server-protocol.h	\
 	protocol/ycbcr-encoding-unstable-v1-protocol.c			\
-	protocol/ycbcr-encoding-unstable-v1-server-protocol.h
+	protocol/ycbcr-encoding-unstable-v1-server-protocol.h		\
+	protocol/colorspace-unstable-v1-protocol.c			\
+	protocol/colorspace-unstable-v1-server-protocol.h
 
 BUILT_SOURCES += $(nodist_libweston_@LIBWESTON_MAJOR@_la_SOURCES)
 
