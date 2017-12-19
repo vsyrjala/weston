@@ -2701,6 +2701,8 @@ compile_shader(GLenum type, int count, const char **sources)
 	glCompileShader(s);
 	glGetShaderiv(s, GL_COMPILE_STATUS, &status);
 	if (!status) {
+		for (int c = 0; c < count; c++)
+			weston_log("%s", sources[c]);
 		glGetShaderInfoLog(s, sizeof msg, NULL, msg);
 		weston_log("shader info: %s\n", msg);
 		return GL_NONE;
