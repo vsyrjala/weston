@@ -643,6 +643,17 @@ weston_simple_egl_CFLAGS = $(AM_CFLAGS) $(SIMPLE_EGL_CLIENT_CFLAGS)
 weston_simple_egl_LDADD = $(SIMPLE_EGL_CLIENT_LIBS) -lm
 endif
 
+if BUILD_SIMPLE_EGL_CLIENTS
+demo_clients += weston-simple-colorspace
+weston_simple_colorspace_SOURCES = clients/simple-colorspace.c \
+				   shared/gamma.c
+nodist_weston_simple_colorspace_SOURCES =		\
+	protocol/xdg-shell-unstable-v6-protocol.c		\
+	protocol/xdg-shell-unstable-v6-client-protocol.h
+weston_simple_colorspace_CFLAGS = $(AM_CFLAGS) $(SIMPLE_EGL_CLIENT_CFLAGS)
+weston_simple_colorspace_LDADD = $(SIMPLE_EGL_CLIENT_LIBS) -lm
+endif
+
 if BUILD_SIMPLE_DMABUF_DRM_CLIENT
 demo_clients += weston-simple-dmabuf-drm
 weston_simple_dmabuf_drm_SOURCES =			\
