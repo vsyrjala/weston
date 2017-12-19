@@ -252,6 +252,8 @@ struct gl_renderer {
 
 	int has_gl_texture_rg;
 
+	struct gl_shader gamma_shader_rgba;
+	struct gl_shader gamma_shader_rgbx;
 	struct gl_texture_shaders texture_shader;
 	struct gl_texture_shaders st2084_texture_shader;
 	struct gl_shader invert_color_shader;
@@ -931,6 +933,28 @@ shader_uniforms_identity(struct gl_shader *shader)
 }
 
 static void
+shader_uniforms_gamma(struct gl_shader *shader, const char *gamma)
+{
+	struct weston_matrix matrix;
+	struct weston_gamma_coeff gamma_coeff;
+	GLfloat m[9];
+
+	weston_matrix_init(&matrix);
+
+	convert_matrix_3x3(m, &matrix);
+	glUniformMatrix3fv(shader->csc_uniform,
+			   1, GL_FALSE, m);
+
+	glUniformMatrix4fv(shader->yuv2rgb_uniform,
+			   1, GL_FALSE, matrix.d);
+
+	weston_degamma_lookup(&gamma_coeff, gamma);
+
+	convert_gamma_coeff(m, &gamma_coeff);
+	glUniform4fv(shader->degamma_coeff_uniform, 1, m);
+}
+
+static void
 shader_uniforms(struct gl_shader *shader,
 		struct weston_view *view,
 		struct weston_output *output)
@@ -1258,7 +1282,8 @@ output_get_border_damage(struct weston_output *output,
 
 static void
 output_get_damage(struct weston_output *output,
-		  pixman_region32_t *buffer_damage, uint32_t *border_damage)
+		  pixman_region32_t *buffer_damage, uint32_t *border_damage,
+		  bool no_buffer_age)
 {
 	struct gl_output_state *go = get_output_state(output);
 	struct gl_renderer *gr = get_renderer(output->compositor);
@@ -1266,7 +1291,7 @@ output_get_damage(struct weston_output *output,
 	EGLBoolean ret;
 	int i;
 
-	if (gr->has_egl_buffer_age) {
+	if (!no_buffer_age && gr->has_egl_buffer_age) {
 		ret = eglQuerySurface(gr->egl_display, go->egl_surface,
 				      EGL_BUFFER_AGE_EXT, &buffer_age);
 		if (ret == EGL_FALSE) {
@@ -1314,6 +1339,111 @@ output_rotate_damage(struct weston_output *output,
 	go->border_damage[go->buffer_damage_index] = border_status;
 }
 
+static int
+prep_fb(struct weston_output *output, GLuint *fbo, GLuint *tex)
+{
+	int cw = output->current_mode->width;
+	int ch = output->current_mode->height;
+	GLenum status;
+
+	if (strcmp(output->gamma, "ST2084"))
+		return 0;
+
+	glGenTextures(1, tex);
+	glBindTexture(GL_TEXTURE_2D, *tex);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F_EXT, cw, ch,
+		     0, GL_RGBA, GL_FLOAT, NULL);
+	glBindTexture(GL_TEXTURE_2D, 0);
+
+	glGenFramebuffers(1, fbo);
+	glBindFramebuffer(GL_FRAMEBUFFER, *fbo);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+			       GL_TEXTURE_2D, *tex, 0);
+
+	status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+	if (status != GL_FRAMEBUFFER_COMPLETE) {
+		weston_log("%s: fbo error: %#x\n", __func__, status);
+		glDeleteFramebuffers(1, fbo);
+		glDeleteTextures(1, tex);
+		return -1;
+	}
+
+	return 0;
+}
+
+static void
+finish_fb(struct weston_output *output,
+	  GLuint fbo, GLuint tex)
+{
+	static const GLfloat verts[4 * 2] = {
+		0.0f, 0.0f,
+		1.0f, 0.0f,
+		1.0f, 1.0f,
+		0.0f, 1.0f
+	};
+	static const GLfloat projmat_normal[16] = { /* transpose */
+		 2.0f,  0.0f, 0.0f, 0.0f,
+		 0.0f,  2.0f, 0.0f, 0.0f,
+		 0.0f,  0.0f, 1.0f, 0.0f,
+		-1.0f, -1.0f, 0.0f, 1.0f
+	};
+	static const GLfloat projmat_yinvert[16] = { /* transpose */
+		 2.0f,  0.0f, 0.0f, 0.0f,
+		 0.0f, -2.0f, 0.0f, 0.0f,
+		 0.0f,  0.0f, 1.0f, 0.0f,
+		-1.0f,  1.0f, 0.0f, 1.0f
+	};
+	struct gl_renderer *gr = get_renderer(output->compositor);
+	int cw = output->current_mode->width;
+	int ch = output->current_mode->height;
+	const GLfloat *proj;
+	int i;
+	struct gl_shader *shader = &gr->gamma_shader_rgbx;
+
+	if (strcmp(output->gamma, "ST2084"))
+		return;
+
+	glBindTexture(GL_TEXTURE_2D, tex);
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	glViewport(0, 0, cw, ch);
+	glDisable(GL_BLEND);
+	use_shader(gr, shader);
+	shader_uniforms_gamma(shader, output->gamma);
+	if (1)
+		proj = projmat_normal;
+	else
+		proj = projmat_yinvert;
+
+	glUniformMatrix4fv(shader->proj_uniform, 1, GL_FALSE, proj);
+	glUniform1f(shader->alpha_uniform, 1.0f);
+
+	for (i = 0; i < 1; i++) {
+		glUniform1i(shader->tex_uniforms[i], i);
+
+		glActiveTexture(GL_TEXTURE0 + i);
+		glBindTexture(GL_TEXTURE_2D, tex);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	}
+
+	/* position: */
+	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, verts);
+	glEnableVertexAttribArray(0);
+
+	/* texcoord: */
+	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, verts);
+	glEnableVertexAttribArray(1);
+
+	glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+
+	glDisableVertexAttribArray(1);
+	glDisableVertexAttribArray(0);
+
+	glDeleteFramebuffers(1, &fbo);
+	glDeleteTextures(1, &tex);
+}
+
 /* NOTE: We now allow falling back to ARGB gl visuals when XRGB is
  * unavailable, so we're assuming the background has no transparency
  * and that everything with a blend, like drop shadows, will have something
@@ -1337,11 +1467,15 @@ gl_renderer_repaint_output(struct weston_output *output,
 	pixman_region32_t buffer_damage, total_damage;
 	enum gl_border_status border_damage = BORDER_STATUS_CLEAN;
 	EGLSyncKHR begin_render_sync, end_render_sync;
+	GLuint fbo = 0, tex;
 
 	if (use_output(output) < 0)
 		return;
 
 	begin_render_sync = timeline_create_render_sync(gr);
+
+	if (prep_fb(output, &fbo, &tex))
+		return;
 
 	/* Calculate the viewport */
 	glViewport(go->borders[GL_RENDERER_BORDER_LEFT].width,
@@ -1375,7 +1509,8 @@ gl_renderer_repaint_output(struct weston_output *output,
 	pixman_region32_init(&total_damage);
 	pixman_region32_init(&buffer_damage);
 
-	output_get_damage(output, &buffer_damage, &border_damage);
+	output_get_damage(output, &buffer_damage, &border_damage,
+			  fbo != 0);
 	output_rotate_damage(output, output_damage, go->border_status);
 
 	pixman_region32_union(&total_damage, &buffer_damage, output_damage);
@@ -1390,6 +1525,8 @@ gl_renderer_repaint_output(struct weston_output *output,
 
 	pixman_region32_copy(&output->previous_damage, output_damage);
 	wl_signal_emit(&output->frame_signal, output);
+
+	finish_fb(output, fbo, tex);
 
 	end_render_sync = timeline_create_render_sync(gr);
 
@@ -2836,6 +2973,20 @@ static const char fragment_degamma_st2084[] =
 	"    return st2084_eotf(v);\n"
 	"}\n";
 
+#if 0
+static const char fragment_gamma[] =
+	POW3 GAMMA
+	"vec3 frag_gamma(vec3 v, vec4 c) {\n"
+	"    return gamma(v, c.x, c.y, c.z, c.w);\n"
+	"}\n";
+#endif
+
+static const char fragment_gamma_st2084[] =
+	POW3 ST2084_INVERSE_EOTF
+	"vec3 frag_gamma(vec3 v, vec4 c) {\n"
+	"    return st2084_inverse_eotf(v);\n"
+	"}\n";
+
 /* Declare common fragment shader uniforms */
 #define FRAGMENT_CONVERT_YUV						\
 	"  vec4 yuv = vec4(y, u, v, 1.0);\n"				\
@@ -2848,6 +2999,29 @@ static const char fragment_debug[] =
 
 static const char fragment_brace[] =
 	"}\n";
+
+static const char gamma_fragment_header[] =
+	"precision mediump float;\n"
+	"varying vec2 v_texcoord;\n"
+	"uniform sampler2D tex;\n"
+	"uniform vec4 gamma_coeff;\n"
+	;
+
+static const char gamma_fragment_shader_rgba[] =
+	"void main()\n"
+	"{\n"
+	"   vec3 rgb = texture2D(tex, v_texcoord).rgb;\n"
+	"   float a = texture2D(tex, v_texcoord).a;\n"
+	"   gl_FragColor = vec4(frag_gamma(rgb, gamma_coeff), a);\n"
+	;
+
+static const char gamma_fragment_shader_rgbx[] =
+	"void main()\n"
+	"{\n"
+	"   vec3 rgb = texture2D(tex, v_texcoord).rgb;\n"
+	"   float a = texture2D(tex, v_texcoord).a;\n"
+	"   gl_FragColor = vec4(frag_gamma(rgb, gamma_coeff), 1.0);\n"
+	;
 
 static const char texture_fragment_header_2d[] =
 	"precision mediump float;\n"
@@ -3844,6 +4018,20 @@ static int
 compile_shaders(struct weston_compositor *ec)
 {
 	struct gl_renderer *gr = get_renderer(ec);
+
+	gr->gamma_shader_rgba.vertex_source = vertex_shader;
+	gr->gamma_shader_rgba.fragment_sources[0] = gamma_fragment_header;
+	/* FIXME gamma not fully parametrrized via uniforms, need a few shader variants */
+	gr->gamma_shader_rgba.fragment_sources[1] = fragment_gamma_st2084;
+	gr->gamma_shader_rgba.fragment_sources[2] = gamma_fragment_shader_rgba;
+	gr->gamma_shader_rgba.fragment_count = 3;
+
+	gr->gamma_shader_rgbx.vertex_source = vertex_shader;
+	gr->gamma_shader_rgbx.fragment_sources[0] = gamma_fragment_header;
+	/* FIXME gamma not fully parametrrized via uniforms, need a few shader variants */
+	gr->gamma_shader_rgbx.fragment_sources[1] = fragment_gamma_st2084;
+	gr->gamma_shader_rgbx.fragment_sources[2] = gamma_fragment_shader_rgbx;
+	gr->gamma_shader_rgbx.fragment_count = 3;
 
 	compile_texture_shaders(&gr->texture_shader, fragment_degamma);
 	compile_texture_shaders(&gr->st2084_texture_shader, fragment_degamma_st2084);
