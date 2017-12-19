@@ -50,6 +50,7 @@
 #include "compositor.h"
 #include "compositor-drm.h"
 #include "shared/helpers.h"
+#include "shared/gamma.h"
 #include "shared/timespec-util.h"
 #include "gl-renderer.h"
 #include "weston-egl-ext.h"
@@ -108,6 +109,12 @@ enum wdrm_connector_property {
 	WDRM_CONNECTOR_EDID = 0,
 	WDRM_CONNECTOR_DPMS,
 	WDRM_CONNECTOR__COUNT
+};
+
+enum wdrm_crtc_property {
+	WDRM_CRTC_GAMMA_LUT,
+	WDRM_CRTC_GAMMA_LUT_SIZE,
+	WDRM_CRTC__COUNT
 };
 
 /**
@@ -295,6 +302,7 @@ struct drm_output {
 
 	/* Holds the properties for the connector */
 	struct drm_property_info props_conn[WDRM_CONNECTOR__COUNT];
+	struct drm_property_info props_crtc[WDRM_CRTC__COUNT];
 
 	enum dpms_enum dpms;
 	struct backlight *backlight;
@@ -3159,6 +3167,79 @@ drm_output_set_seat(struct weston_output *base,
 				     seat ? seat : "");
 }
 
+static void
+_drm_output_set_gamma(struct weston_output *o)
+{
+	struct drm_output *output = to_drm_output(o);
+	struct drm_property_info *prop_lut_size =
+		&output->props_crtc[WDRM_CRTC_GAMMA_LUT_SIZE];
+	struct drm_property_info *prop_lut =
+		&output->props_crtc[WDRM_CRTC_GAMMA_LUT];
+	struct drm_backend *b = to_drm_backend(o->compositor);
+	drmModeObjectPropertiesPtr props;
+	struct weston_gamma_coeff c;
+	int i, ret;
+	uint32_t blob_id = 0;
+	int size;
+	uint16_t *lut;
+	/*
+	 * Gamma LUT input precision isn't good enough for ST2084 PQ,
+	 * we apply the ST2084 curve using a FP16 intermediate fbo and
+	 * a shader instead.
+	 */
+	bool linear_gamma = !strcmp(o->gamma, "ST2084");
+
+	props = drmModeObjectGetProperties(b->drm.fd, output->crtc_id,
+					   DRM_MODE_OBJECT_CRTC);
+	if (!props) {
+		weston_log("couldn't get crtc properties\n");
+		return;
+	}
+	size = drm_property_get_value(prop_lut_size, props, 0);
+	drmModeFreeObjectProperties(props);
+
+	weston_log("gamma = %s\n", o->gamma);
+	weston_log("gamma_lut_size = %d\n", size);
+
+	if (size == 0)
+		return;
+
+	weston_gamma_lookup(&c, o->gamma);
+
+	lut = calloc(size, 4 * sizeof(uint16_t));
+	for (i = 0; i < size; i++) {
+		float in = (float) i / (float) (size - 1);
+		uint16_t out = (linear_gamma ?
+				in : weston_gamma(&c, in)) * 0xffff;
+		lut[4*i+0] = out;
+		lut[4*i+1] = out;
+		lut[4*i+2] = out;
+		lut[4*i+3] = 0;
+	}
+
+	ret = drmModeCreatePropertyBlob(b->drm.fd, lut, i * 4 * 2, &blob_id);
+	if (ret) {
+		weston_log("DRM: Gamma: failed blob create for %s\n",
+			   output->base.name);
+		return;
+	}
+
+	ret = drmModeObjectSetProperty(b->drm.fd, output->crtc_id,
+					DRM_MODE_OBJECT_CRTC,
+				       prop_lut->prop_id, blob_id);
+	if (ret) {
+		weston_log("DRM: Gamma: failed property set for %s\n",
+			   output->base.name);
+		if (blob_id)
+			drmModeDestroyPropertyBlob(b->drm.fd, blob_id);
+		return;
+	}
+	free(lut);
+
+	weston_log("DRM: Gamma: property set for %s\n",
+		   output->base.name);
+}
+
 static int
 drm_output_enable(struct weston_output *base)
 {
@@ -3218,6 +3299,10 @@ drm_output_enable(struct weston_output *base)
 				    ", built-in" : "");
 
 	output->state_invalid = true;
+
+	output->base.set_gamma = drm_output_set_gamma;
+
+	_drm_output_set_gamma(&output->base);
 
 	return 0;
 
@@ -3351,6 +3436,10 @@ create_output_for_connector(struct drm_backend *b,
 		[WDRM_CONNECTOR_EDID] = { .name = "EDID" },
 		[WDRM_CONNECTOR_DPMS] = { .name = "DPMS" },
 	};
+	static const struct drm_property_info crtc_props[] = {
+		[WDRM_CRTC_GAMMA_LUT] = { .name = "GAMMA_LUT" },
+		[WDRM_CRTC_GAMMA_LUT_SIZE] = { .name = "GAMMA_LUT_SIZE" },
+	};
 
 	i = find_crtc_for_connector(b, resources, connector);
 	if (i < 0) {
@@ -3405,6 +3494,16 @@ create_output_for_connector(struct drm_backend *b,
 	output->base.mm_width = output->connector->mmWidth;
 	output->base.mm_height = output->connector->mmHeight;
 
+	drmModeFreeObjectProperties(props);
+
+	props = drmModeObjectGetProperties(b->drm.fd, output->crtc_id,
+					   DRM_MODE_OBJECT_CRTC);
+	if (!props) {
+		weston_log("failed to get crtc properties\n");
+		goto err;
+	}
+	drm_property_info_populate(b, crtc_props, output->props_crtc,
+				   WDRM_CRTC__COUNT, props);
 	drmModeFreeObjectProperties(props);
 
 	for (i = 0; i < output->connector->count_modes; i++) {

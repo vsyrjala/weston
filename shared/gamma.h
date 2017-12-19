@@ -47,4 +47,7 @@ void weston_degamma_lookup(struct weston_gamma_coeff *coeff,
 			   const char *name);
 void weston_gamma_print(const struct weston_gamma_coeff *coeff);
 
+float weston_gamma(struct weston_gamma_coeff *c, float x);
+float weston_degamma(struct weston_gamma_coeff *c, float x);
+
 #endif
