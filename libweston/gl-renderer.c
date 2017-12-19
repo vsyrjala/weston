@@ -1623,8 +1623,10 @@ static GLenum gl_format_from_internal(GLenum internal_format)
 {
 	switch (internal_format) {
 	case GL_R8_EXT:
+	case GL_R16_EXT:
 		return GL_RED_EXT;
 	case GL_RG8_EXT:
+	case GL_RG16_EXT:
 		return GL_RG_EXT;
 	default:
 		return internal_format;
@@ -1821,6 +1823,7 @@ gl_renderer_attach_shm(struct weston_surface *es, struct weston_buffer *buffer,
 	int pitch;
 	int num_planes;
 	bool is_yuv, st2084;
+	float bpc_mul = 1.0f;
 
 	buffer->shm_buffer = shm_buffer;
 	buffer->width = wl_shm_buffer_get_width(shm_buffer);
@@ -1832,6 +1835,18 @@ gl_renderer_attach_shm(struct weston_surface *es, struct weston_buffer *buffer,
 	gs->vsub[0] = 1;
 
 	switch (wl_shm_buffer_get_format(shm_buffer)) {
+	case WL_SHM_FORMAT_YUV420_10:
+	case WL_SHM_FORMAT_YVU420_10:
+		bpc_mul = 65535.0f / 1023.0f;
+		is_yuv = true;
+		break;
+	case WL_SHM_FORMAT_YVU420_12:
+	case WL_SHM_FORMAT_YUV420_12:
+		bpc_mul = 65535.0f / 4095.0f;
+		is_yuv = true;
+		break;
+	case WL_SHM_FORMAT_YUV420_16:
+	case WL_SHM_FORMAT_YVU420_16:
 	case WL_SHM_FORMAT_YUV420:
 	case WL_SHM_FORMAT_YVU420:
 	case WL_SHM_FORMAT_NV12:
@@ -1851,7 +1866,7 @@ gl_renderer_attach_shm(struct weston_surface *es, struct weston_buffer *buffer,
 			e = weston_color_encoding_lookup("BT.709");
 
 		weston_ycbcr2rgb_matrix(&gs->yuv2rgb_matrix, e,
-					1.0f, es->ycbcr_full_range);
+					bpc_mul, es->ycbcr_full_range);
 	}
 
 	st2084 = setup_colors(gr, es, is_yuv);
@@ -1917,6 +1932,47 @@ gl_renderer_attach_shm(struct weston_surface *es, struct weston_buffer *buffer,
 		default:
 			break;
 		}
+		break;
+	case WL_SHM_FORMAT_YUV420_10:
+	case WL_SHM_FORMAT_YUV420_12:
+	case WL_SHM_FORMAT_YUV420_16:
+	case WL_SHM_FORMAT_YVU420_10:
+	case WL_SHM_FORMAT_YVU420_12:
+	case WL_SHM_FORMAT_YVU420_16:
+		if (st2084)
+			gs->shader = &gr->st2084_texture_shader.y_u_v;
+		else
+			gs->shader = &gr->texture_shader.y_u_v;
+		pitch = wl_shm_buffer_get_stride(shm_buffer);
+		gl_pixel_type = GL_UNSIGNED_SHORT;
+		num_planes = 3;
+		gs->offset[1] = gs->offset[0] + (pitch / gs->hsub[0]) *
+			(buffer->height / gs->vsub[0]);
+		gs->hsub[1] = 2;
+		gs->vsub[1] = 2;
+		gs->offset[2] = gs->offset[1] + (pitch / gs->hsub[1]) *
+			(buffer->height / gs->vsub[1]);
+		gs->hsub[2] = 2;
+		gs->vsub[2] = 2;
+		if (gr->has_gl_texture_rg) {
+			gl_format[0] = GL_R16_EXT;
+			gl_format[1] = GL_R16_EXT;
+			gl_format[2] = GL_R16_EXT;
+		} else {
+			gl_format[0] = GL_LUMINANCE;
+			gl_format[1] = GL_LUMINANCE;
+			gl_format[2] = GL_LUMINANCE;
+		}
+		switch (wl_shm_buffer_get_format(shm_buffer)) {
+		case WL_SHM_FORMAT_YVU420_10:
+		case WL_SHM_FORMAT_YVU420_12:
+		case WL_SHM_FORMAT_YVU420_16:
+			SWAP(gs->offset[1], gs->offset[2]);
+			break;
+		default:
+			break;
+		}
+		pitch /= 2;
 		break;
 	case WL_SHM_FORMAT_NV12:
 		pitch = wl_shm_buffer_get_stride(shm_buffer);
@@ -3960,7 +4016,13 @@ gl_renderer_display_create(struct weston_compositor *ec, EGLenum platform,
 
 	wl_display_add_shm_format(ec->wl_display, WL_SHM_FORMAT_RGB565);
 	wl_display_add_shm_format(ec->wl_display, WL_SHM_FORMAT_YUV420);
+	wl_display_add_shm_format(ec->wl_display, WL_SHM_FORMAT_YUV420_10);
+	wl_display_add_shm_format(ec->wl_display, WL_SHM_FORMAT_YUV420_12);
+	wl_display_add_shm_format(ec->wl_display, WL_SHM_FORMAT_YUV420_16);
 	wl_display_add_shm_format(ec->wl_display, WL_SHM_FORMAT_YVU420);
+	wl_display_add_shm_format(ec->wl_display, WL_SHM_FORMAT_YVU420_10);
+	wl_display_add_shm_format(ec->wl_display, WL_SHM_FORMAT_YVU420_12);
+	wl_display_add_shm_format(ec->wl_display, WL_SHM_FORMAT_YVU420_16);
 	wl_display_add_shm_format(ec->wl_display, WL_SHM_FORMAT_NV12);
 	wl_display_add_shm_format(ec->wl_display, WL_SHM_FORMAT_YUYV);
 
