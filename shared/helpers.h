@@ -64,6 +64,20 @@ extern "C" {
 #endif
 
 /**
+ * Swaps the value of the two items.
+ *
+ * @param x the first item.
+ * @param y the second item.
+ */
+#ifndef SWAP
+#define SWAP(x,y) do {				\
+	typeof(x) _x = (x);			\
+	(x) = (y);				\
+	(y) = _x;				\
+} while (0)
+#endif
+
+/**
  * Returns a pointer to the containing struct of a given member item.
  *
  * To demonstrate, the following example retrieves a pointer to
