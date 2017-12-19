@@ -51,6 +51,7 @@
 #include "compositor-drm.h"
 #include "shared/helpers.h"
 #include "shared/gamma.h"
+#include "shared/hdr_metadata.h"
 #include "shared/timespec-util.h"
 #include "gl-renderer.h"
 #include "weston-egl-ext.h"
@@ -108,6 +109,7 @@ enum wdrm_plane_type {
 enum wdrm_connector_property {
 	WDRM_CONNECTOR_EDID = 0,
 	WDRM_CONNECTOR_DPMS,
+	WDRM_CONNECTOR_HDR_METADATA,
 	WDRM_CONNECTOR__COUNT
 };
 
@@ -3240,6 +3242,74 @@ _drm_output_set_gamma(struct weston_output *o)
 		   output->base.name);
 }
 
+static uint16_t encode_xyy(float xyy)
+{
+	return xyy * 50000;
+}
+
+static void
+_drm_output_set_hdr_metadata(struct drm_output *output)
+{
+	struct drm_property_info *prop =
+		&output->props_conn[WDRM_CONNECTOR_HDR_METADATA];
+	struct drm_backend *b = to_drm_backend(output->base.compositor);
+	const struct weston_colorspace *cs;
+	enum hdr_metadata_eotf eotf;
+	uint8_t data[26];
+	uint32_t blob_id = 0;
+	int ret;
+
+	if (!prop->prop_id) {
+		weston_log("DRM: HDR metadata: no property for %s\n",
+			   output->base.name);
+		return;
+	}
+
+	if (!strcmp(output->base.gamma, "ST2084"))
+		eotf = EOTF_ST2084;
+	else if (!strcmp(output->base.gamma, "HLG"))
+		eotf = EOTF_HLG;
+	else
+		eotf = EOTF_TRADITIONAL_GAMMA_SDR;
+
+	cs = weston_colorspace_lookup(output->base.colorspace);
+
+	weston_hdr_metadata(data,
+			    encode_xyy(cs->r.f[0]),
+			    encode_xyy(cs->r.f[1]),
+			    encode_xyy(cs->g.f[0]),
+			    encode_xyy(cs->g.f[1]),
+			    encode_xyy(cs->b.f[0]),
+			    encode_xyy(cs->b.f[1]),
+			    encode_xyy(cs->whitepoint.f[0]),
+			    encode_xyy(cs->whitepoint.f[1]),
+			    10000,
+			    0,
+			    20,
+			    20,
+			    eotf);
+
+	ret = drmModeCreatePropertyBlob(b->drm.fd, data, sizeof(data), &blob_id);
+	if (ret) {
+		weston_log("DRM: HDR metadata: failed blob create for %s\n",
+			   output->base.name);
+		return;
+	}
+
+	ret = drmModeConnectorSetProperty(b->drm.fd, output->connector_id,
+					  prop->prop_id, blob_id);
+	if (ret) {
+		weston_log("DRM: HDR metadata: failed property set for %s\n",
+			   output->base.name);
+		if (blob_id)
+			drmModeDestroyPropertyBlob(b->drm.fd, blob_id);
+		return;
+	}
+
+	weston_log("DRM: HDR metadata: prop set for %s\n",
+		   output->base.name);
+}
+
 static int
 drm_output_enable(struct weston_output *base)
 {
@@ -3303,6 +3373,7 @@ drm_output_enable(struct weston_output *base)
 	output->base.set_gamma = drm_output_set_gamma;
 
 	_drm_output_set_gamma(&output->base);
+	_drm_output_set_hdr_metadata(output);
 
 	return 0;
 
@@ -3435,6 +3506,7 @@ create_output_for_connector(struct drm_backend *b,
 	static const struct drm_property_info connector_props[] = {
 		[WDRM_CONNECTOR_EDID] = { .name = "EDID" },
 		[WDRM_CONNECTOR_DPMS] = { .name = "DPMS" },
+		[WDRM_CONNECTOR_HDR_METADATA] = { .name = "HDR_SOURCE_METADATA" },
 	};
 	static const struct drm_property_info crtc_props[] = {
 		[WDRM_CRTC_GAMMA_LUT] = { .name = "GAMMA_LUT" },
