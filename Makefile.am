@@ -117,6 +117,8 @@ libweston_@LIBWESTON_MAJOR@_la_SOURCES =			\
 	shared/colorspace.c				\
 	shared/colorspace.h				\
 	shared/helpers.h				\
+	shared/gamma.c					\
+	shared/gamma.h					\
 	shared/matrix.c					\
 	shared/matrix.h					\
 	shared/timespec-util.h				\
