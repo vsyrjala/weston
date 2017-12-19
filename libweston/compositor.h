@@ -1282,6 +1282,7 @@ struct weston_surface {
 	bool ycbcr_full_range;
 	const char *colorspace;
 	const char *gamma;
+	uint8_t hdr_metadata[26];
 };
 
 struct weston_subsurface {
@@ -1988,6 +1989,7 @@ weston_output_from_resource(struct wl_resource *resource);
 
 int weston_ycbcr_encoding_setup(struct weston_compositor *compositor);
 int weston_colorspace_setup(struct weston_compositor *compositor);
+int weston_hdr_metadata_setup(struct weston_compositor *compositor);
 
 #ifdef  __cplusplus
 }

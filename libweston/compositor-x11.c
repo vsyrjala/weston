@@ -1864,6 +1864,10 @@ x11_backend_create(struct weston_compositor *compositor,
 		weston_log("Error: initializing colorspace "
 			   "support failed.\n");
 
+	if (weston_hdr_metadata_setup(compositor) < 0)
+		weston_log("Error: initializing hdr metadata "
+			   "support failed.\n");
+
 	ret = weston_plugin_api_register(compositor, WESTON_WINDOWED_OUTPUT_API_NAME,
 					 &api, sizeof(api));
 

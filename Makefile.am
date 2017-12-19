@@ -91,6 +91,7 @@ libweston_@LIBWESTON_MAJOR@_la_SOURCES =			\
 	libweston/compositor-x11.h			\
 	libweston/colorspace.c				\
 	libweston/ycbcr_encoding.c			\
+	libweston/hdr_metadata.c			\
 	libweston/input.c				\
 	libweston/data-device.c				\
 	libweston/screenshooter.c			\
@@ -119,6 +120,8 @@ libweston_@LIBWESTON_MAJOR@_la_SOURCES =			\
 	shared/helpers.h				\
 	shared/gamma.c					\
 	shared/gamma.h					\
+	shared/hdr_metadata.c				\
+	shared/hdr_metadata.h				\
 	shared/matrix.c					\
 	shared/matrix.h					\
 	shared/timespec-util.h				\
@@ -195,7 +198,9 @@ nodist_libweston_@LIBWESTON_MAJOR@_la_SOURCES =				\
 	protocol/ycbcr-encoding-unstable-v1-protocol.c			\
 	protocol/ycbcr-encoding-unstable-v1-server-protocol.h		\
 	protocol/colorspace-unstable-v1-protocol.c			\
-	protocol/colorspace-unstable-v1-server-protocol.h
+	protocol/colorspace-unstable-v1-server-protocol.h		\
+	protocol/hdr-metadata-unstable-v1-protocol.c			\
+	protocol/hdr-metadata-unstable-v1-server-protocol.h
 
 BUILT_SOURCES += $(nodist_libweston_@LIBWESTON_MAJOR@_la_SOURCES)
 
