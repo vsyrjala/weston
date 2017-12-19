@@ -58,10 +58,13 @@
 #include "shared/helpers.h"
 #include "shared/platform.h"
 #include "shared/color_encoding.h"
+#include "shared/gamma.h"
 #include "shared/colorspace.h"
 #include "shared/csc.h"
 #include "shared/timespec-util.h"
 #include "weston-egl-ext.h"
+
+#include "glsl_shaders.h"
 
 struct gl_shader {
 	GLuint program;
@@ -71,6 +74,7 @@ struct gl_shader {
 	GLint alpha_uniform;
 	GLint color_uniform;
 	GLint csc_uniform;
+	GLint degamma_coeff_uniform;
 	GLint yuv2rgb_uniform;
 	GLint fragment_count;
 	const char *vertex_source, *fragment_sources[3];
@@ -162,6 +166,7 @@ struct gl_surface_state {
 
 	struct weston_matrix yuv2rgb_matrix;
 	struct weston_matrix csc_matrix;
+	struct weston_gamma_coeff degamma_coeff;
 
 	GLuint textures[3];
 	int num_textures;
@@ -892,6 +897,16 @@ convert_matrix_3x3(GLfloat dst[9],
 }
 
 static void
+convert_gamma_coeff(GLfloat dst[4],
+		    const struct weston_gamma_coeff *coeff)
+{
+	dst[0] = coeff->p;
+	dst[1] = coeff->a;
+	dst[2] = coeff->knee;
+	dst[3] = coeff->linear;
+}
+
+static void
 shader_uniforms_identity(struct gl_shader *shader)
 {
 	struct weston_matrix matrix;
@@ -905,6 +920,12 @@ shader_uniforms_identity(struct gl_shader *shader)
 
 	glUniformMatrix4fv(shader->yuv2rgb_uniform,
 			   1, GL_FALSE, matrix.d);
+
+	m[0] = 1.0f;
+	m[1] = 0.0f;
+	m[2] = 0.0f;
+	m[3] = 1.0f;
+	glUniform4fv(shader->degamma_coeff_uniform, 1, m);
 }
 
 static void
@@ -930,6 +951,10 @@ shader_uniforms(struct gl_shader *shader,
 	//weston_matrix_print(&gs->yuv2rgb_matrix);
 	glUniformMatrix4fv(shader->yuv2rgb_uniform,
 			   1, GL_FALSE, gs->yuv2rgb_matrix.d);
+
+	//weston_gamma_print(&gs->degamma_coeff);
+	convert_gamma_coeff(m, &gs->degamma_coeff);
+	glUniform4fv(shader->degamma_coeff_uniform, 1, m);
 
 	for (i = 0; i < gs->num_textures; i++)
 		glUniform1i(shader->tex_uniforms[i], i);
@@ -1597,17 +1622,24 @@ static void setup_colors(struct gl_renderer *gr,
 	struct gl_surface_state *gs = get_surface_state(es);
 	const struct weston_colorspace *src_cs, *dst_cs;
 	const char *src_colorspace = NULL;
+	const char *src_gamma = NULL;
 
 	if (es->colorspace)
 		src_colorspace = es->colorspace;
+	if (es->gamma)
+		src_gamma = es->gamma;
 
 	/* FIXME */
 	if (is_yuv) {
 		if (!src_colorspace)
 			src_colorspace = "BT.709";
+		if (!src_gamma)
+			src_gamma = "BT.709";
 	} else {
 		if (!src_colorspace)
 			src_colorspace = "sRGB";
+		if (!src_gamma)
+			src_gamma = "sRGB";
 	}
 
 	if (!strcmp(src_colorspace, "Undefined"))
@@ -1616,6 +1648,8 @@ static void setup_colors(struct gl_renderer *gr,
 	src_cs = weston_colorspace_lookup(src_colorspace);
 	dst_cs = weston_colorspace_lookup(gr->colorspace);
 	weston_csc_matrix(&gs->csc_matrix, dst_cs, src_cs, 1.0f);
+
+	weston_degamma_lookup(&gs->degamma_coeff, src_gamma);
 }
 
 static void
@@ -2732,11 +2766,17 @@ static const char vertex_shader[] =
 	"   v_texcoord = texcoord;\n"
 	"}\n";
 
+static const char fragment_degamma[] =
+	POW3 DEGAMMA
+	"vec3 frag_degamma(vec3 v, vec4 c) {\n"
+	"    return degamma(v, c.x, c.y, c.z, c.w);\n"
+	"}\n";
+
 /* Declare common fragment shader uniforms */
 #define FRAGMENT_CONVERT_YUV						\
 	"  vec4 yuv = vec4(y, u, v, 1.0);\n"				\
 	"  vec3 rgb = (yuv2rgb * yuv).rgb;\n"				\
-	"  rgb = csc * rgb;\n"						\
+	"  rgb = csc * frag_degamma(rgb, degamma_coeff);\n"		\
 	"  gl_FragColor = alpha * vec4(rgb, 1.0);\n"
 
 static const char fragment_debug[] =
@@ -2751,6 +2791,7 @@ static const char texture_fragment_header_2d[] =
 	"uniform sampler2D tex;\n"
 	"uniform float alpha;\n"
 	"uniform mat3 csc;\n"
+	"uniform vec4 degamma_coeff;\n"
 	;
 
 static const char texture_fragment_header_egl_external[] =
@@ -2760,6 +2801,7 @@ static const char texture_fragment_header_egl_external[] =
 	"uniform samplerExternalOES tex;\n"
 	"uniform float alpha;\n"
 	"uniform mat3 csc;\n"
+	"uniform vec4 degamma_coeff;\n"
 	;
 
 static const char texture_fragment_shader_rgba[] =
@@ -2767,7 +2809,7 @@ static const char texture_fragment_shader_rgba[] =
 	"{\n"
 	"   vec3 rgb = texture2D(tex, v_texcoord).rgb;\n"
 	"   float a = texture2D(tex, v_texcoord).a;\n"
-	"   rgb = csc * rgb;\n"
+	"   rgb = csc * frag_degamma(rgb, degamma_coeff);\n"
 	"   gl_FragColor = alpha * vec4(rgb, a);\n"
 	;
 
@@ -2776,7 +2818,7 @@ static const char texture_fragment_shader_rgbx[] =
 	"{\n"
 	"   vec3 rgb = texture2D(tex, v_texcoord).rgb;\n"
 	"   float a = texture2D(tex, v_texcoord).a;\n"
-	"   rgb = csc * rgb;\n"
+	"   rgb = csc * frag_degamma(rgb, degamma_coeff);\n"
 	"   gl_FragColor = alpha * vec4(rgb, 1.0);\n"
 	;
 
@@ -2785,7 +2827,7 @@ static const char texture_fragment_shader_egl_external[] =
 	"{\n"
 	"   vec3 rgb = texture2D(tex, v_texcoord).rgb;\n"
 	"   float a = texture2D(tex, v_texcoord).a;\n"
-	"   rgb = csc * rgb;\n"
+	"   rgb = csc * frag_degamma(rgb, degamma_coeff);\n"
 	"   gl_FragColor = alpha * vec4(rgb, a);\n"
 	;
 
@@ -2796,6 +2838,7 @@ static const char texture_fragment_header_y_uv[] =
 	"varying vec2 v_texcoord;\n"
 	"uniform float alpha;\n"
 	"uniform mat3 csc;\n"
+	"uniform vec4 degamma_coeff;\n"
 	"uniform mat4 yuv2rgb;\n"
 	;
 
@@ -2815,6 +2858,7 @@ static const char texture_fragment_header_y_u_v[] =
 	"varying vec2 v_texcoord;\n"
 	"uniform float alpha;\n"
 	"uniform mat3 csc;\n"
+	"uniform vec4 degamma_coeff;\n"
 	"uniform mat4 yuv2rgb;\n"
 	;
 
@@ -2833,6 +2877,7 @@ static const char texture_fragment_header_y_xuxv[] =
 	"varying vec2 v_texcoord;\n"
 	"uniform float alpha;\n"
 	"uniform mat3 csc;\n"
+	"uniform vec4 degamma_coeff;\n"
 	"uniform mat4 yuv2rgb;\n"
 	;
 
@@ -2920,6 +2965,7 @@ shader_init(struct gl_shader *shader, struct gl_renderer *renderer,
 	shader->alpha_uniform = glGetUniformLocation(shader->program, "alpha");
 	shader->color_uniform = glGetUniformLocation(shader->program, "color");
 	shader->csc_uniform = glGetUniformLocation(shader->program, "csc");
+	shader->degamma_coeff_uniform = glGetUniformLocation(shader->program, "degamma_coeff");
 	shader->yuv2rgb_uniform = glGetUniformLocation(shader->program, "yuv2rgb");
 
 	return 0;
@@ -3690,37 +3736,44 @@ gl_renderer_display(struct weston_compositor *ec)
 }
 
 static void
-compile_texture_shaders(struct gl_texture_shaders *texture_shader)
+compile_texture_shaders(struct gl_texture_shaders *texture_shader,
+			const char *degamma)
 {
 	texture_shader->rgba.vertex_source = vertex_shader;
 	texture_shader->rgba.fragment_sources[0] = texture_fragment_header_2d;
-	texture_shader->rgba.fragment_sources[1] = texture_fragment_shader_rgba;
-	texture_shader->rgba.fragment_count = 2;
+	texture_shader->rgba.fragment_sources[1] = degamma;
+	texture_shader->rgba.fragment_sources[2] = texture_fragment_shader_rgba;
+	texture_shader->rgba.fragment_count = 3;
 
 	texture_shader->rgbx.vertex_source = vertex_shader;
 	texture_shader->rgbx.fragment_sources[0] = texture_fragment_header_2d;
-	texture_shader->rgbx.fragment_sources[1] = texture_fragment_shader_rgbx;
-	texture_shader->rgbx.fragment_count = 2;
+	texture_shader->rgbx.fragment_sources[1] = degamma;
+	texture_shader->rgbx.fragment_sources[2] = texture_fragment_shader_rgbx;
+	texture_shader->rgbx.fragment_count = 3;
 
 	texture_shader->egl_external.vertex_source = vertex_shader;
 	texture_shader->egl_external.fragment_sources[0] = texture_fragment_header_egl_external;
-	texture_shader->egl_external.fragment_sources[1] = texture_fragment_shader_egl_external;
-	texture_shader->egl_external.fragment_count = 2;
+	texture_shader->egl_external.fragment_sources[1] = degamma;
+	texture_shader->egl_external.fragment_sources[2] = texture_fragment_shader_egl_external;
+	texture_shader->egl_external.fragment_count = 3;
 
 	texture_shader->y_uv.vertex_source = vertex_shader;
 	texture_shader->y_uv.fragment_sources[0] = texture_fragment_header_y_uv;
-	texture_shader->y_uv.fragment_sources[1] = texture_fragment_shader_y_uv;
-	texture_shader->y_uv.fragment_count = 2;
+	texture_shader->y_uv.fragment_sources[1] = degamma;
+	texture_shader->y_uv.fragment_sources[2] = texture_fragment_shader_y_uv;
+	texture_shader->y_uv.fragment_count = 3;
 
 	texture_shader->y_u_v.vertex_source = vertex_shader;
 	texture_shader->y_u_v.fragment_sources[0] = texture_fragment_header_y_u_v;
-	texture_shader->y_u_v.fragment_sources[1] = texture_fragment_shader_y_u_v;
-	texture_shader->y_u_v.fragment_count = 2;
+	texture_shader->y_u_v.fragment_sources[1] = degamma;
+	texture_shader->y_u_v.fragment_sources[2] = texture_fragment_shader_y_u_v;
+	texture_shader->y_u_v.fragment_count = 3;
 
 	texture_shader->y_xuxv.vertex_source = vertex_shader;
 	texture_shader->y_xuxv.fragment_sources[0] = texture_fragment_header_y_xuxv;
-	texture_shader->y_xuxv.fragment_sources[1] = texture_fragment_shader_y_xuxv;
-	texture_shader->y_xuxv.fragment_count = 2;
+	texture_shader->y_xuxv.fragment_sources[1] = degamma;
+	texture_shader->y_xuxv.fragment_sources[2] = texture_fragment_shader_y_xuxv;
+	texture_shader->y_xuxv.fragment_count = 3;
 }
 
 static int
@@ -3728,7 +3781,7 @@ compile_shaders(struct weston_compositor *ec)
 {
 	struct gl_renderer *gr = get_renderer(ec);
 
-	compile_texture_shaders(&gr->texture_shader);
+	compile_texture_shaders(&gr->texture_shader, fragment_degamma);
 
 	gr->solid_shader.vertex_source = vertex_shader;
 	gr->solid_shader.fragment_sources[0] = solid_fragment_shader;
