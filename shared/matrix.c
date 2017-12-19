@@ -129,6 +129,17 @@ weston_matrix_transform(const struct weston_matrix *matrix, struct weston_vector
 	*v = t;
 }
 
+WL_EXPORT void
+weston_matrix_diag(struct weston_matrix *matrix, const struct weston_vector *v)
+{
+	unsigned c;
+
+	weston_matrix_init(matrix);
+
+	for (c = 0; c < 4; c++)
+		matrix->d[c * 4 + c] = v->f[c];
+}
+
 static inline void
 swap_rows(double *a, double *b)
 {
